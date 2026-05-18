@@ -1,0 +1,26 @@
+manifestVersion: 1
+name: '@mccormick/aurae'
+version: 2026.05.17.1
+description: >
+  Swamp execution driver that runs a method's `run` command inside an
+  aurae cell via `aer`. Allocates the cell, starts the executable,
+  streams stdout/stderr back through `aer observe`, and tears the cell
+  down. Designed so a sibling micro-VM target can be added without
+  changing the driver orchestrator.
+repository: 'https://github.com/jan0ski/swamp-extensions'
+paths:
+  base: manifest
+models: []
+workflows: []
+vaults: []
+drivers:
+  - mod.ts
+datastores: []
+reports: []
+additionalFiles: []
+labels:
+  - aurae
+  - cell
+  - driver
+  - isolation
+dependencies: []
