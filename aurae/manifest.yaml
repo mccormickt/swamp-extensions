@@ -17,7 +17,9 @@ drivers:
   - mod.ts
 datastores: []
 reports: []
-additionalFiles: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
 labels:
   - aurae
   - cell

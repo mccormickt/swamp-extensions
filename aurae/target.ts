@@ -5,26 +5,38 @@
 
 import { AerClient, parseStartPid } from "./aer.ts";
 
+/** The unit of work an {@link ExecutionTarget} runs. */
 export interface TargetSpec {
+  /** Unique cell/vm name; the driver constructs this per invocation. */
   name: string;
+  /** Shell command to run inside the cell/vm. */
   command: string;
+  /** Display name for `aer cell start`; defaults to `swamp-<method>`. */
   executableName: string;
   uid?: number;
   gid?: number;
 }
 
+/** Outcome of one {@link ExecutionTarget.run}. */
 export interface RunResult {
   pid: number;
   stdout: string[];
   stderr: string[];
-  // No exit code is available — auraed/aer don't surface one for an
-  // executable. `success` is true unless aer itself reported failure or
-  // a configured failureMarker regex matched any stderr line.
+  /**
+   * `true` unless `aer` reported failure or a configured `failureMarker`
+   * matched a stderr line. Note: auraed/aer do not surface an OS exit
+   * code, so this is the only signal available.
+   */
   success: boolean;
-  // First failure reason, if any, for the driver to surface.
+  /** First failure reason, if any, for the driver to surface. */
   reason?: string;
 }
 
+/**
+ * Isolation backend the driver orchestrator delegates to. Today only
+ * {@link CellTarget} is implemented; a `VmTarget` for micro-VMs is the
+ * planned sibling.
+ */
 export interface ExecutionTarget {
   readonly kind: "cell" | "vm";
   run(
@@ -39,6 +51,7 @@ export interface ExecutionTarget {
   ): Promise<RunResult>;
 }
 
+/** Resource limits passed to `aer cell allocate`. */
 export interface CellLimits {
   cpuWeight?: number;
   cpuMax?: string;
@@ -53,6 +66,12 @@ export interface CellLimits {
   isolateNetwork?: boolean;
 }
 
+/**
+ * Runs a {@link TargetSpec} inside an aurae cell. Allocates the cell with
+ * the configured {@link CellLimits}, starts the executable, drains both
+ * log channels to completion, then tears the cell down in `finally` —
+ * each cleanup call hard-bounded by `cleanupTimeoutMs`.
+ */
 export class CellTarget implements ExecutionTarget {
   readonly kind = "cell" as const;
   constructor(readonly limits: CellLimits) {}
@@ -180,9 +199,11 @@ export class CellTarget implements ExecutionTarget {
   }
 }
 
-// Map CellLimits → `aer cell allocate` flags. Names match the live aer
-// CLI (`aer cell allocate --help`), which prefixes everything with
-// `--cell-`. The isolate flags are bare booleans (no value).
+/**
+ * Map {@link CellLimits} → `aer cell allocate` argv. Names match the live
+ * `aer cell allocate --help` flags (every option is `--cell-*`). The
+ * isolate flags are bare booleans.
+ */
 export function buildAllocateArgs(
   cellName: string,
   limits: CellLimits,

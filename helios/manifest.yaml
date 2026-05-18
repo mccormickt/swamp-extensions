@@ -35,7 +35,9 @@ vaults: []
 drivers: []
 datastores: []
 reports: []
-additionalFiles: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
 labels:
   - illumos
   - helios

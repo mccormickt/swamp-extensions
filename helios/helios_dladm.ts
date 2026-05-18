@@ -10,6 +10,7 @@ import {
   pfexec,
   resolveTarget,
   shq,
+  SshArgsShape,
   sshExec,
   sshExecOrThrow,
   type SshTarget,
@@ -20,14 +21,6 @@ const GlobalArgs = z.object({
   sshPort: z.number().int().positive().optional(),
   sshKnownHosts: z.string().optional(),
 });
-
-// Required on every method — the host is the verb's target.
-const SshArgsShape = {
-  sshHost: z.string().describe("Target Helios host (FQDN or IP)."),
-  sshUser: z.string().optional(),
-  sshPort: z.number().int().positive().optional(),
-  sshKnownHosts: z.string().optional(),
-};
 
 const LinkSchema = z.object({
   link: z.string(),
@@ -105,6 +98,18 @@ async function lookupVnic(
   };
 }
 
+/**
+ * `@mccormick/helios/dladm` — datalink, etherstub, and VNIC management on a
+ * Helios host.
+ *
+ * Methods: `link_list`, `phys_list`, `etherstub_create`, `etherstub_destroy`,
+ * `vnic_create`, `vnic_destroy`. `vnic_create` applies link-protection
+ * (`mac-nospoof,ip-nospoof,dhcp-nospoof,restricted`) and an optional
+ * `allowed-ips` linkprop in the same call as the VNIC creation, so a VNIC
+ * is never visible on the wire without anti-spoof on.
+ *
+ * Privileged commands run via `pfexec` (RBAC profile: "Network Management").
+ */
 export const model = {
   type: "@mccormick/helios/dladm",
   version: "2026.05.14.3",

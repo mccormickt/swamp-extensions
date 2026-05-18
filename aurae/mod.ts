@@ -66,6 +66,19 @@ type ExecutionCallbacks = {
   onLog?: (line: string) => void;
 };
 
+/**
+ * Swamp `ExecutionDriver` that runs a method's `run` command inside an
+ * aurae cell via the `aer` CLI.
+ *
+ * Lifecycle per method invocation: allocate a cell → start the executable →
+ * stream stdout/stderr through `aer observe` → stop + free the cell. A
+ * wall-clock timeout (`config.timeoutSecs`) aborts the run and still allows
+ * cleanup to complete. The orchestrator delegates the isolation primitive
+ * to an `ExecutionTarget` (currently `CellTarget`) so a VM target can be
+ * added without changing this driver.
+ *
+ * @see ConfigSchema for the configuration accepted via `.swamp.yaml`.
+ */
 export const driver = {
   type: "@mccormick/aurae",
   name: "Aurae Cell Driver",
@@ -168,7 +181,13 @@ export const driver = {
   },
 };
 
-function errorResult(error: string, start: number, logs: string[]) {
+function errorResult(error: string, start: number, logs: string[]): {
+  status: "error";
+  error: string;
+  outputs: never[];
+  logs: string[];
+  durationMs: number;
+} {
   return {
     status: "error" as const,
     error,

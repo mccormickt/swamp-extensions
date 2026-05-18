@@ -11,6 +11,7 @@ import {
   pfexec,
   resolveTarget,
   shq,
+  SshArgsShape,
   sshExec,
   sshExecOrThrow,
 } from "./shared/ssh.ts";
@@ -20,14 +21,6 @@ const GlobalArgs = z.object({
   sshPort: z.number().int().positive().optional(),
   sshKnownHosts: z.string().optional(),
 });
-
-// Required on every method — the host is the verb's target.
-const SshArgsShape = {
-  sshHost: z.string().describe("Target Helios host (FQDN or IP)."),
-  sshUser: z.string().optional(),
-  sshPort: z.number().int().positive().optional(),
-  sshKnownHosts: z.string().optional(),
-};
 
 const DatasetSchema = z.object({
   name: z.string(),
@@ -66,7 +59,7 @@ const SnapshotSchema = z.object({
 
 function parseProp(
   raw: string | undefined,
-  asNum = false,
+  asNum: boolean = false,
 ): string | number | null {
   if (!raw || raw === "-" || raw === "none") return null;
   if (asNum) {
@@ -115,6 +108,21 @@ function parseDatasetGet(
   };
 }
 
+/**
+ * `@mccormick/helios/zfs` — ZFS dataset, pool, and snapshot operations on a
+ * Helios host.
+ *
+ * Methods: `dataset_list`, `dataset_lookup`, `dataset_create`,
+ * `dataset_destroy`, `snapshot_create`, `snapshot_destroy`, `delegate`
+ * (zone delegation), `pool_status`, `pool_scrub`. All privileged commands
+ * run via `pfexec` so a non-root user with the "ZFS Storage Management"
+ * RBAC profile can drive the model.
+ *
+ * Encryption: pass `encryption` + `encryptionPassphrase` to `dataset_create`
+ * to provision an encrypted dataset. The passphrase is sent over stdin to
+ * `zfs create` with `keyformat=passphrase keylocation=prompt`; it is never
+ * interpolated into a command line and is redacted from error messages.
+ */
 export const model = {
   type: "@mccormick/helios/zfs",
   version: "2026.05.14.3",
@@ -244,11 +252,15 @@ export const model = {
           pfexec(`zfs create ${opts.join(" ")} ${shq(args.name)}`)
         }`;
         // Pipe the passphrase twice (zfs create with keylocation=prompt asks
-        // for it then a confirmation).
+        // for it then a confirmation). Redact from any thrown error so the
+        // secret doesn't leak via stderr capture.
         const stdin = args.encryption
           ? `${args.encryptionPassphrase}\n${args.encryptionPassphrase}\n`
           : undefined;
-        await sshExecOrThrow(t, cmd, stdin);
+        const redact = args.encryptionPassphrase
+          ? [args.encryptionPassphrase]
+          : undefined;
+        await sshExecOrThrow(t, cmd, stdin, { redact });
 
         // Read back the created dataset.
         const out = await sshExecOrThrow(

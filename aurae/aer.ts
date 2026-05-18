@@ -15,23 +15,42 @@
 // The shape mirrors `extensions/shared/ssh.ts`: a small Deno.Command wrapper
 // plus a couple of pure parsers.
 
+/** Configuration for an {@link AerClient}. */
 export interface AerConfig {
+  /** Path to the `aer` binary (or just `"aer"` to use `$PATH`). */
   binary: string;
+  /**
+   * Directory containing the aurae `config` file. When set, the driver runs
+   * `aer` with `HOME=configHome` so `~/.aurae/config` resolves to the
+   * correct cert + socket for a per-host auraed.
+   */
   configHome?: string;
+  /** Additional environment variables to pass through to `aer`. */
   env?: Record<string, string>;
 }
 
+/** Result of a one-shot `aer` invocation. */
 export interface AerExecResult {
   code: number;
   stdout: string;
   stderr: string;
 }
 
+/** A single LogItem.line extracted from `aer observe`, tagged with channel. */
 export interface ObserveLine {
   line: string;
+  /** 1 = stdout, 2 = stderr. Matches `aer observe`'s channel argument. */
   channel: 1 | 2;
 }
 
+/**
+ * Thin subprocess wrapper around the `aer` CLI. The rest of the driver
+ * speaks to auraed only through this class so it can stay ignorant of
+ * `aer`'s quirks: no `--endpoint` flag (config is HOME-based), gRPC
+ * responses pretty-printed with Rust's debug formatter, and exit code 0
+ * even on protocol errors. Methods return the parsed result; callers
+ * inspect stderr and the parsed stdout to decide success.
+ */
 export class AerClient {
   constructor(readonly config: AerConfig) {}
 
@@ -42,14 +61,16 @@ export class AerClient {
     return base;
   }
 
-  // Run a single `aer` subcommand to completion. Each argv element is passed
-  // as-is — no shell interpolation. Caller checks `stderr`/`code` and the
-  // parsed stdout to decide success; see the AerConfig comment.
-  //
-  // `timeoutMs` bounds the call so a hung auraed (e.g. cell-free blocked on
-  // stuck observe streams) can't wedge the driver. On timeout, the
-  // subprocess is killed and an AerExecResult with code=-1 and a synthetic
-  // stderr message is returned.
+  /**
+   * Run a single `aer` subcommand to completion. Each argv element is
+   * passed as-is — no shell interpolation. The caller checks `stderr` and
+   * `code` plus the parsed stdout to decide success (see {@link AerConfig}).
+   *
+   * `timeoutMs`, if supplied, hard-bounds the call so a hung auraed (e.g.
+   * `cell free` blocked on stuck observe streams) can't wedge the driver.
+   * On timeout the subprocess is killed and the returned result carries a
+   * synthetic stderr.
+   */
   async exec(args: string[], timeoutMs?: number): Promise<AerExecResult> {
     // @ts-ignore - Deno API
     const proc = new Deno.Command(this.config.binary, {
@@ -86,15 +107,21 @@ export class AerClient {
     }
   }
 
-  // Stream `aer observe get-sub-process-stream <pid> <channel>` and yield
-  // one entry per parsed LogItem.line. The subprocess's stdout EOF — which
-  // auraed sends when the cell process exits — terminates the generator.
-  // Caller is responsible for awaiting both channels concurrently.
-  //
-  // `cellName` is required when the process was started inside a cell —
-  // auraed routes the observe RPC to that cell's nested daemon, which is
-  // where the stdout/stderr channels were registered. Omit it only for
-  // executables started at the root level (none, currently).
+  /**
+   * Stream `aer observe get-sub-process-stream <pid> <channel>` and yield
+   * one entry per parsed `LogItem.line`. The subprocess's stdout EOF —
+   * which auraed sends when the cell process exits — terminates the
+   * generator. The caller is responsible for awaiting both channels
+   * concurrently.
+   *
+   * `cellName` is required when the process was started inside a cell:
+   * auraed routes the observe RPC to that cell's nested daemon, which is
+   * where the stdout/stderr channels were registered. Omit it only for
+   * executables started at the root level (none, currently).
+   *
+   * `signal` lets the caller abort the underlying subprocess (e.g. when
+   * the driver's wall-clock timer fires) so cleanup can still run.
+   */
   async *observe(
     pid: number,
     channel: 1 | 2,
@@ -154,15 +181,20 @@ export class AerClient {
   }
 }
 
-// Parse the `pid: <int>` field out of a `CellServiceStartResponse` printed
-// in Rust pretty-debug format. Returns the first match, or throws.
-//
-// Example stdout:
-//   CellServiceStartResponse {
-//       pid: 12345,
-//       uid: 0,
-//       gid: 0,
-//   }
+/**
+ * Parse the `pid: <int>` field out of a `CellServiceStartResponse` printed
+ * in Rust pretty-debug format. Returns the first match, or throws if no
+ * `pid` field is found in `stdout`.
+ *
+ * Example stdout:
+ * ```
+ *   CellServiceStartResponse {
+ *       pid: 12345,
+ *       uid: 0,
+ *       gid: 0,
+ *   }
+ * ```
+ */
 export function parseStartPid(stdout: string): number {
   const m = stdout.match(/\bpid:\s*(\d+)/);
   if (!m) {
@@ -173,10 +205,12 @@ export function parseStartPid(stdout: string): number {
   return Number(m[1]);
 }
 
-// Yield every `line: "..."` string found in `text`, in order, with Rust
-// debug-string escapes (\\, \", \n, \t, \r, \0) unescaped to their literal
-// characters. Used to pull LogItem.line out of `aer observe`'s pretty-debug
-// output stream.
+/**
+ * Yield every `line: "..."` string found in `text`, in order, with Rust
+ * debug-string escapes (`\\`, `\"`, `\n`, `\t`, `\r`, `\0`) unescaped to
+ * their literal characters. Used to pull `LogItem.line` out of
+ * `aer observe`'s pretty-debug output stream.
+ */
 export function* extractLogLines(text: string): Iterable<string> {
   // The Rust Debug impl for `String` uses `\"` for double quotes and `\\`
   // for backslashes; everything else is left literal in pretty mode unless
@@ -224,10 +258,10 @@ function unescapeRustDebugString(s: string): string {
   return out;
 }
 
-// Find the byte offset just past the last `}` at column 0 in `buffer`. We
-// use this as a coarse boundary between completed pretty-debug stanzas and
-// any in-progress trailing one — safe because aer always prints stanzas
-// terminated with a top-level `}` followed by `\n`.
+// Byte offset just past the last `}` at column 0 in `buffer`. Coarse
+// boundary between completed pretty-debug stanzas and any in-progress
+// trailing one — safe because aer always prints stanzas terminated with a
+// top-level `}` followed by `\n`.
 function lastStanzaEnd(buffer: string): number {
   const m = buffer.match(/[\s\S]*\n\}\n/);
   return m ? m[0].length : 0;

@@ -15,6 +15,7 @@ import {
   pfexec,
   resolveTarget,
   shq,
+  SshArgsShape,
   sshExec,
   sshExecOrThrow,
   type SshTarget,
@@ -25,14 +26,6 @@ const GlobalArgs = z.object({
   sshPort: z.number().int().positive().optional(),
   sshKnownHosts: z.string().optional(),
 });
-
-// Required on every method — the host is the verb's target.
-const SshArgsShape = {
-  sshHost: z.string().describe("Target Helios host (FQDN or IP)."),
-  sshUser: z.string().optional(),
-  sshPort: z.number().int().positive().optional(),
-  sshKnownHosts: z.string().optional(),
-};
 
 // Hardened limit-priv: drop privileges that let a zone reconfigure the
 // network or perform host-level admin actions. Keep the default set, then
@@ -135,6 +128,8 @@ const InventorySummarySchema = z.object({
   byState: z.record(z.string(), z.number().int()),
   byBrand: z.record(z.string(), z.number().int()),
   failedSmfZones: z.number().int(),
+  /** Zones whose per-zone gather emitted at least one note (partial data). */
+  zonesWithGatherErrors: z.number().int(),
   totalCpuCap: z.number(),
   totalMemoryCapMb: z.number().int(),
   observedAt: z.iso.datetime(),
@@ -375,6 +370,26 @@ function buildZonecfgScript(args: {
   return lines.join("\n") + "\n";
 }
 
+/**
+ * `@mccormick/helios/zone` — illumos zone lifecycle and inventory for the
+ * `solaris` and `bhyve` brands.
+ *
+ * Lifecycle methods: `list`, `lookup`, `create`, `install`, `boot`, `halt`,
+ * `uninstall`, `delete`, `exec` (zlogin), plus a fan-out `inventory`.
+ *
+ * `create` applies hardened defaults: `ip-type=exclusive`,
+ * `file-mac-profile=fixed-configuration` (native brand),
+ * a hardened `limit-priv` set, `capped-cpu`/`capped-memory` rctls, and
+ * `autoboot=false`. Override explicitly via arguments.
+ *
+ * `inventory` opens one SSH ControlMaster session and gathers identity,
+ * live usage (`prstat`/`pgrep`), security config, network state
+ * (vnic/mac/protection/allowed-ips/rx-tx), storage (zfs props +
+ * snapshot count), SMF health, last-boot/uptime, and recent log lines
+ * for every zone on the host — emitting one `zone_inventory` resource
+ * per zone plus an `inventory_summary` rollup that includes the count
+ * of zones with failed SMF services.
+ */
 export const model = {
   type: "@mccormick/helios/zone",
   version: "2026.05.14.3",
@@ -722,6 +737,7 @@ export const model = {
             byState: {} as Record<string, number>,
             byBrand: {} as Record<string, number>,
             failedSmfZones: 0,
+            zonesWithGatherErrors: 0,
             totalCpuCap: 0,
             totalMemoryCapMb: 0,
             observedAt: new Date().toISOString(),
@@ -736,6 +752,12 @@ export const model = {
               summary.totalMemoryCapMb += inv.cappedMemoryMb;
             }
             if (inv.smfFailedServices.length > 0) summary.failedSmfZones += 1;
+            // notes is populated whenever a sub-gather failed (zonecfg
+            // export, prstat parse, SMF probe, dataset lookup, ...). Skipped
+            // states (e.g. zone not running → no live cpu/rss) also push a
+            // note, so this counts "saw at least one degraded field" rather
+            // than strictly "hit an error".
+            if (inv.notes.length > 0) summary.zonesWithGatherErrors += 1;
             handles.push(
               await context.writeResource("zone_inventory", zn.name, inv),
             );

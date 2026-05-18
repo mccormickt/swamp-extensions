@@ -13,6 +13,8 @@ import {
   openSession,
   pfexec,
   resolveTarget,
+  SshArgsSchema,
+  SshArgsShape,
   sshExec,
   sshExecOrThrow,
   type SshTarget,
@@ -28,20 +30,6 @@ const GlobalArgs = z.object({
     "Path to a known_hosts file. Omit to use accept-new on first connect.",
   ),
 });
-
-const SshArgsSchema = z.object({
-  sshHost: z.string().describe("Target Helios host (FQDN or IP)."),
-  sshUser: z.string().optional(),
-  sshPort: z.number().int().positive().optional(),
-  sshKnownHosts: z.string().optional(),
-});
-
-const SshArgsShape = {
-  sshHost: z.string().describe("Target Helios host (FQDN or IP)."),
-  sshUser: z.string().optional(),
-  sshPort: z.number().int().positive().optional(),
-  sshKnownHosts: z.string().optional(),
-};
 
 const HostInfoSchema = z.object({
   host: z.string(),
@@ -176,12 +164,13 @@ function parseTotalMem(prtconf: string): number {
 }
 
 function parseCpuCount(psrinfo: string): number {
-  return psrinfo.trim().split(/\r?\n/).filter((l) => l.length > 0).length;
+  return psrinfo.trim().split(/\r?\n/).filter((l): boolean => l.length > 0)
+    .length;
 }
 
 function parseRpool(zpool: string): string {
   const pools = zpool.trim().split(/\r?\n/).filter(Boolean);
-  return pools.find((p) => p === "rpool") ?? pools[0] ?? "rpool";
+  return pools.find((p): boolean => p === "rpool") ?? pools[0] ?? "rpool";
 }
 
 // `uptime` line looks like:
@@ -738,6 +727,20 @@ function deriveVerdict(
   };
 }
 
+/**
+ * `@mccormick/helios/host` — one model instance per physical Helios machine.
+ *
+ * Probes identity/capacity (`lookup` → `host_info`) and exposes read-only
+ * diagnostics: `thermal`, `load`, `faults`, `messages`, plus a fan-out
+ * `health_check` that runs all four in a single ControlMaster SSH session
+ * and writes a combined `audit` resource with a verdict
+ * (`healthy` | `workload_driven` | `scrub_in_progress` | `thermal_alarm` |
+ * `fault_present` | `unknown`) and a reason string.
+ *
+ * Connection settings come from `globalArguments` (`sshUser`, `sshPort`,
+ * `sshKnownHosts`); the per-method `sshHost` argument is required on every
+ * call. SSH key material is sourced from the user's ssh-agent.
+ */
 export const model = {
   type: "@mccormick/helios/host",
   version: "2026.05.14.4",
