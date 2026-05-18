@@ -1,0 +1,47 @@
+manifestVersion: 1
+name: '@mccormick/helios'
+version: 2026.05.14.1
+description: >
+  Manage an illumos/Helios host over SSH from swamp.
+
+  Four model types compose to provision and inventory zones with explicit
+  ZFS layout and isolation/security controls:
+
+  - `@mccormick/helios/host`  — connection profile + uname/release probe
+  - `@mccormick/helios/zfs`   — remote ZFS dataset and pool ops
+  - `@mccormick/helios/dladm` — datalink and exclusive-IP VNIC management
+  - `@mccormick/helios/zone`  — zonecfg/zoneadm with hardened defaults
+                                (ip-type=exclusive, file-mac-profile,
+                                hardened limit-priv, capped-cpu/memory) plus
+                                a fan-out `inventory` method that gathers
+                                live usage, security state, network, storage,
+                                SMF health, and recent log lines for every
+                                zone in a single SSH session.
+
+  Brands supported: `solaris` (native illumos) and `bhyve`. SSH key supplied
+  by the user's ssh-agent (e.g. the 1Password SSH agent); no key material
+  flows through swamp. Privileged commands run via `pfexec` so the model
+  can connect as a non-root user with the relevant Solaris RBAC profiles.
+repository: 'https://github.com/jan0ski/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - helios_host.ts
+  - helios_zfs.ts
+  - helios_dladm.ts
+  - helios_zone.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles: []
+labels:
+  - illumos
+  - helios
+  - zones
+  - zfs
+  - dladm
+  - bhyve
+  - ssh
+dependencies: []
