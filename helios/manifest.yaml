@@ -22,7 +22,7 @@ description: >
   by the user's ssh-agent (e.g. the 1Password SSH agent); no key material
   flows through swamp. Privileged commands run via `pfexec` so the model
   can connect as a non-root user with the relevant Solaris RBAC profiles.
-repository: 'https://github.com/jan0ski/swamp-extensions'
+repository: 'https://github.com/mccormickt/swamp-extensions'
 paths:
   base: manifest
 models:

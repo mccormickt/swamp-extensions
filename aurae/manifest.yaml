@@ -7,7 +7,7 @@ description: >
   streams stdout/stderr back through `aer observe`, and tears the cell
   down. Designed so a sibling micro-VM target can be added without
   changing the driver orchestrator.
-repository: 'https://github.com/jan0ski/swamp-extensions'
+repository: 'https://github.com/mccormickt/swamp-extensions'
 paths:
   base: manifest
 models: []
