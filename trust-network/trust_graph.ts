@@ -87,13 +87,36 @@ const BuildArgs = z.object({
 });
 
 /**
+ * Thresholds for `assert_posture`. Each defaults to the most permissive value,
+ * so a bare `assert_posture` run always passes — callers opt into strictness
+ * per environment via method arguments (no `globalArguments` change).
+ */
+const AssertPostureArgs = z.object({
+  maxCritical: z.number().int().min(0).default(0).describe(
+    "Maximum allowed `critical` findings",
+  ),
+  maxHigh: z.number().int().min(0).default(0).describe(
+    "Maximum allowed `high` findings",
+  ),
+  maxMedium: z.number().int().min(0).default(Number.MAX_SAFE_INTEGER).describe(
+    "Maximum allowed `medium` findings (unbounded by default)",
+  ),
+  minEphemeralPct: z.number().min(0).max(100).default(0).describe(
+    "Minimum required ephemeral-credential coverage, 0-100",
+  ),
+  minConditionalAccessPct: z.number().min(0).max(100).default(0).describe(
+    "Minimum required conditional-access coverage, 0-100",
+  ),
+});
+
+/**
  * `@mccormick/trust-network/graph` — builds the normalized trust graph from
  * the provider scans. Read-only aggregation; writes `trust_domain`,
  * `trust_edge`, and one `inventory` roll-up.
  */
 export const model = {
   type: "@mccormick/trust-network/graph",
-  version: "2026.05.19.1",
+  version: "2026.05.20.1",
   reports: ["@mccormick/trust-network/posture"],
   globalArguments: GlobalArgs,
   resources: {
@@ -232,6 +255,77 @@ export const model = {
           },
         );
         return { dataHandles: handles };
+      },
+    },
+    assert_posture: {
+      description:
+        "Fail when the trust-graph posture breaches configured thresholds. " +
+        "Reads the `inventory` roll-up that `build` wrote and throws a " +
+        "violation list when findings or coverage are worse than allowed. " +
+        "The CI enforcement gate — writes no data.",
+      arguments: AssertPostureArgs,
+      execute: async (args, context) => {
+        const a = AssertPostureArgs.parse(args);
+
+        const raw = await context.readResource("current");
+        if (raw === null) {
+          throw new Error(
+            "no trust-graph inventory found — run `graph build` first",
+          );
+        }
+        const inv = TrustInventorySchema.parse(raw);
+
+        const critical = inv.findingsBySeverity.critical ?? 0;
+        const high = inv.findingsBySeverity.high ?? 0;
+        const medium = inv.findingsBySeverity.medium ?? 0;
+
+        const violations: string[] = [];
+        if (critical > a.maxCritical) {
+          violations.push(
+            `critical findings: ${critical} (max ${a.maxCritical})`,
+          );
+        }
+        if (high > a.maxHigh) {
+          violations.push(`high findings: ${high} (max ${a.maxHigh})`);
+        }
+        if (medium > a.maxMedium) {
+          violations.push(`medium findings: ${medium} (max ${a.maxMedium})`);
+        }
+        if (inv.ephemeralPct < a.minEphemeralPct) {
+          violations.push(
+            `ephemeral-credential coverage: ${inv.ephemeralPct}% ` +
+              `(min ${a.minEphemeralPct}%)`,
+          );
+        }
+        if (inv.conditionalAccessPct < a.minConditionalAccessPct) {
+          violations.push(
+            `conditional-access coverage: ${inv.conditionalAccessPct}% ` +
+              `(min ${a.minConditionalAccessPct}%)`,
+          );
+        }
+
+        if (violations.length > 0) {
+          throw new Error(
+            `trust posture gate FAILED — ${violations.length} ` +
+              `threshold(s) breached:\n` +
+              violations.map((v) => `  - ${v}`).join("\n") +
+              `\ngraph built ${inv.builtAt}; ${inv.edgeCount} edges`,
+          );
+        }
+
+        context.logger.info(
+          "trust posture gate PASSED — {critical} critical, {high} high, " +
+            "{medium} medium; {ephemeral}% ephemeral, " +
+            "{ca}% conditional-access",
+          {
+            critical,
+            high,
+            medium,
+            ephemeral: inv.ephemeralPct,
+            ca: inv.conditionalAccessPct,
+          },
+        );
+        return { dataHandles: [] };
       },
     },
   },

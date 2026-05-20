@@ -180,6 +180,34 @@ Representative findings:
 | `CF_ACCESS_NO_POSTURE`           | medium   | An Access app's policies lack a device-posture or MFA factor. |
 | `CF_SERVICE_TOKEN_NO_EXPIRY`     | medium   | A Cloudflare service token never expires or is long-lived.    |
 
+## Enforcement gate
+
+The posture report *observes*; the enforcement gate *fails CI* when posture
+regresses. The `graph` model's `assert_posture` method reads the inventory
+roll-up that `build` produced and throws when it breaches configured
+thresholds — all method arguments, all permissive by default:
+
+| Threshold                 | Default   | Fails when                                   |
+| ------------------------- | --------- | -------------------------------------------- |
+| `maxCritical`             | `0`       | critical findings exceed the limit           |
+| `maxHigh`                 | `0`       | high findings exceed the limit               |
+| `maxMedium`               | unbounded | medium findings exceed the limit             |
+| `minEphemeralPct`         | `0`       | ephemeral-credential coverage drops below it |
+| `minConditionalAccessPct` | `0`       | conditional-access coverage drops below it   |
+
+The `trust-gate` workflow is the CI entrypoint — it runs the three scans,
+builds the graph, then asserts:
+
+```sh
+swamp workflow run trust-gate
+```
+
+The `assert` step fails the workflow on a breach, so wiring `trust-gate` into a
+pipeline blocks a merge or deploy when, say, a Workload Identity provider
+appears with no attribute condition. Unlike `trust-inventory`, `trust-gate`
+carries no schedule. Tune the gate per environment in the `assert` step's
+`inputs:` block; `maxCritical: 0` is the firm baseline.
+
 ## Known limitations
 
 - **Heuristic claim analysis.** GCP `attributeCondition` expressions are

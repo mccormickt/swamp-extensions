@@ -1,11 +1,13 @@
 /**
  * `@mccormick/trust-network/posture` — trust-graph posture report.
  *
- * A model-scope report: it runs after `@mccormick/trust-network/graph build`
- * and reads the `inventory`, `trust_edge`, and `trust_domain` resources that
- * `build` just wrote. It produces a scorecard — the share of trust edges
- * backed by ephemeral credentials and the share gated by conditional access —
- * and a severity-grouped list of findings. Rendering lives in
+ * A model-scope report keyed to the `graph` model's `build` method: it scores
+ * the graph `build` produces — reading the `inventory`, `trust_edge`, and
+ * `trust_domain` resources `build` wrote — into a scorecard of ephemeral- and
+ * conditional-access coverage plus a severity-grouped finding list. The graph
+ * model also carries the `assert_posture` gate method, which produces no
+ * graph; after any method other than `build` the report returns a brief
+ * not-applicable note. Rendering lives in
  * [`shared/graph.ts`](./shared/graph.ts).
  *
  * @module
@@ -53,6 +55,20 @@ export const report = {
   execute: async (
     context: ModelReportContext,
   ): Promise<{ markdown: string; json: unknown }> => {
+    // Posture scoring applies only to the `build` method's output. The graph
+    // model also carries the `assert_posture` gate, which produces no graph —
+    // skip cleanly so the report is, in effect, scoped to `build`.
+    if (context.methodName !== "build") {
+      const method = context.methodName || "(no method)";
+      return {
+        markdown: "# Trust Network Posture\n\n" +
+          "This report scores the trust graph produced by " +
+          "`@mccormick/trust-network/graph build`. It does not apply to " +
+          `\`${method}\`.`,
+        json: { skipped: true, methodName: context.methodName },
+      };
+    }
+
     const handles = context.dataHandles ?? [];
     const inventoryHandle = handles.find((h) => h.specName === "inventory");
     if (!inventoryHandle) {

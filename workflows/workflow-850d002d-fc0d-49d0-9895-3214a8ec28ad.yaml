@@ -1,0 +1,93 @@
+id: 850d002d-fc0d-49d0-9895-3214a8ec28ad
+name: trust-gate
+description: >
+  CI enforcement gate for OIDC trust posture. Scans GitHub, GCP, and Cloudflare
+  One, builds the normalized trust graph, then asserts the posture against
+  configured thresholds — the `assert` step fails the workflow when findings or
+  credential/access coverage breach the limits. The three provider scans run in
+  parallel and are joined on `completed`, so one provider failing still gates on
+  the providers that succeeded. No schedule: run it from CI with
+  `swamp workflow run trust-gate`.
+version: 1
+tags: {}
+jobs:
+  - name: scan
+    description: Discover trust configuration from each provider in parallel.
+    weight: 0
+    dependsOn: []
+    steps:
+      - name: github
+        description: Scan GitHub Actions OIDC config and Actions secrets.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: github-scan
+          methodName: scan
+      - name: gcp
+        description: Scan GCP Workload Identity Federation.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: gcp-scan
+          methodName: scan
+      - name: cloudflare
+        description: Scan Cloudflare One / Zero Trust Access.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: cf-scan
+          methodName: scan
+  - name: aggregate
+    description: Build the trust graph from the three scans.
+    weight: 0
+    dependsOn:
+      - job: scan
+        condition:
+          type: completed
+    steps:
+      - name: build
+        description: Normalize the three scans into the trust graph.
+        weight: 0
+        allowFailure: false
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: trust-graph
+          methodName: build
+          inputs:
+            githubOidcSubjects: ${{ data.findBySpec("github-scan", "oidc_subject") }}
+            githubSecrets: ${{ data.findBySpec("github-scan", "actions_secret") }}
+            gcpWifPools: ${{ data.findBySpec("gcp-scan", "wif_pool") }}
+            gcpWifProviders: ${{ data.findBySpec("gcp-scan", "wif_provider") }}
+            gcpServiceAccounts: ${{ data.findBySpec("gcp-scan", "service_account") }}
+            gcpSaKeys: ${{ data.findBySpec("gcp-scan", "sa_key") }}
+            cfAccessApps: ${{ data.findBySpec("cf-scan", "access_app") }}
+            cfAccessPolicies: ${{ data.findBySpec("cf-scan", "access_policy") }}
+            cfIdentityProviders: ${{ data.findBySpec("cf-scan", "identity_provider") }}
+            cfServiceTokens: ${{ data.findBySpec("cf-scan", "service_token") }}
+  - name: gate
+    description: Assert the trust posture; fail the workflow on a breach.
+    weight: 0
+    dependsOn:
+      - job: aggregate
+        condition:
+          type: completed
+    steps:
+      - name: assert
+        description: Fail the workflow when posture breaches thresholds.
+        weight: 0
+        allowFailure: false
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: trust-graph
+          methodName: assert_posture
+          inputs:
+            maxCritical: 0
+            maxHigh: 0

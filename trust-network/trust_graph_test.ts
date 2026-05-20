@@ -4,7 +4,11 @@
  * Covers `coerceInputs`, `deriveGithubSlice`, `computeInventory`, and an
  * end-to-end `build` via the in-memory model test context.
  */
-import { assertEquals } from "jsr:@std/assert@1";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert@1";
 import { createModelTestContext } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import { model } from "./trust_graph.ts";
 import {
@@ -27,9 +31,11 @@ import {
   GithubActionsSecretSchema,
   type GithubOidcSubject,
   type TrustEdge,
+  type TrustInventory,
 } from "./shared/schema.ts";
 
 type BuildCtx = Parameters<typeof model.methods.build.execute>[1];
+type AssertCtx = Parameters<typeof model.methods.assert_posture.execute>[1];
 const NOW = "2026-05-19T00:00:00Z";
 
 /** A GitHub secret resource with overridable fields. */
@@ -474,4 +480,153 @@ Deno.test("deriveCloudflareSlice flags a long-lived service token", () => {
 
   const short = deriveCloudflareSlice([], [], [], [cfToken({ durationDays: 30 })], NOW);
   assertEquals(short.edges[0].findings.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// assert_posture
+// ---------------------------------------------------------------------------
+
+/** A trust-graph inventory with overridable fields; clean by default. */
+function inventory(over: Partial<TrustInventory>): TrustInventory {
+  return {
+    domainCount: 1,
+    edgeCount: 4,
+    byCredentialType: {},
+    byPlatform: {},
+    ephemeralEdgeCount: 4,
+    ephemeralPct: 100,
+    conditionalAccessEdgeCount: 4,
+    conditionalAccessPct: 100,
+    findingsBySeverity: {},
+    notes: [],
+    builtAt: NOW,
+    ...over,
+  };
+}
+
+Deno.test("assert_posture passes a clean inventory with default thresholds", async () => {
+  const { context } = createModelTestContext({
+    storedResources: { current: inventory({}) },
+  });
+  const result = await model.methods.assert_posture.execute(
+    {},
+    context as AssertCtx,
+  );
+  assertEquals(result, { dataHandles: [] });
+});
+
+Deno.test("assert_posture fails on a critical finding", async () => {
+  const { context } = createModelTestContext({
+    storedResources: {
+      current: inventory({ findingsBySeverity: { critical: 1 } }),
+    },
+  });
+  const err = await assertRejects(
+    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    Error,
+  );
+  assertStringIncludes(err.message, "critical findings: 1");
+});
+
+Deno.test("assert_posture fails on a high finding", async () => {
+  const { context } = createModelTestContext({
+    storedResources: {
+      current: inventory({ findingsBySeverity: { high: 2 } }),
+    },
+  });
+  const err = await assertRejects(
+    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    Error,
+  );
+  assertStringIncludes(err.message, "high findings: 2");
+});
+
+Deno.test("assert_posture fails when ephemeral coverage is below the floor", async () => {
+  const { context } = createModelTestContext({
+    storedResources: { current: inventory({ ephemeralPct: 40 }) },
+  });
+  const err = await assertRejects(
+    () =>
+      model.methods.assert_posture.execute(
+        { minEphemeralPct: 80 },
+        context as AssertCtx,
+      ),
+    Error,
+  );
+  assertStringIncludes(err.message, "ephemeral-credential coverage: 40%");
+});
+
+Deno.test("assert_posture fails when conditional-access coverage is below the floor", async () => {
+  const { context } = createModelTestContext({
+    storedResources: { current: inventory({ conditionalAccessPct: 50 }) },
+  });
+  const err = await assertRejects(
+    () =>
+      model.methods.assert_posture.execute(
+        { minConditionalAccessPct: 90 },
+        context as AssertCtx,
+      ),
+    Error,
+  );
+  assertStringIncludes(err.message, "conditional-access coverage: 50%");
+});
+
+Deno.test("assert_posture lists every breach when multiple thresholds fail", async () => {
+  const { context } = createModelTestContext({
+    storedResources: {
+      current: inventory({
+        findingsBySeverity: { critical: 2, high: 1 },
+        ephemeralPct: 10,
+      }),
+    },
+  });
+  const err = await assertRejects(
+    () =>
+      model.methods.assert_posture.execute(
+        { minEphemeralPct: 50 },
+        context as AssertCtx,
+      ),
+    Error,
+  );
+  assertStringIncludes(err.message, "3 threshold(s) breached");
+  assertStringIncludes(err.message, "critical findings: 2");
+  assertStringIncludes(err.message, "high findings: 1");
+  assertStringIncludes(err.message, "ephemeral-credential coverage: 10%");
+});
+
+Deno.test("assert_posture throws when no inventory has been built", async () => {
+  const { context } = createModelTestContext({});
+  const err = await assertRejects(
+    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    Error,
+  );
+  assertStringIncludes(err.message, "run `graph build` first");
+});
+
+Deno.test("assert_posture honors the maxMedium threshold", async () => {
+  // Mediums pass by default — maxMedium is unbounded.
+  const lenient = createModelTestContext({
+    storedResources: {
+      current: inventory({ findingsBySeverity: { medium: 5 } }),
+    },
+  });
+  assertEquals(
+    await model.methods.assert_posture.execute({}, lenient.context as AssertCtx),
+    { dataHandles: [] },
+  );
+  // ...but fail once maxMedium is tightened below the count.
+  const strict = createModelTestContext({
+    storedResources: {
+      current: inventory({ findingsBySeverity: { medium: 5 } }),
+    },
+  });
+  const err = await assertRejects(
+    () =>
+      model.methods.assert_posture.execute(
+        { maxMedium: 2 },
+        strict.context as AssertCtx,
+      ),
+    Error,
+  );
+  assertStringIncludes(err.message, "medium findings: 5");
 });
