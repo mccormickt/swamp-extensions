@@ -12,3 +12,9 @@
 .claude/scheduled_tasks.lock
 .claude/scheduled_tasks.json
 # END swamp managed section
+
+# Local-only swamp working dirs. This repo authors extensions in per-extension
+# subdirs (aurae/, helios/, trust-network/); the default model-instance and
+# extension working directories hold developer-specific state, not shared work.
+/models/
+/extensions/

@@ -1,0 +1,73 @@
+id: 53cec40a-3d24-474d-aaf5-c34032c1ea29
+name: trust-inventory
+description: >
+  Scan GitHub, GCP, and Cloudflare One for OIDC trust configuration, build the
+  normalized trust graph, and emit the posture report. The three provider
+  scans run in parallel and are joined on `completed`, so one provider failing
+  (an expired token, say) still yields a graph from the providers that
+  succeeded. Carries a weekly schedule for `swamp serve`.
+version: 1
+tags: {}
+trigger:
+  schedule: "0 6 * * 1"
+jobs:
+  - name: scan
+    description: Discover trust configuration from each provider in parallel.
+    weight: 0
+    dependsOn: []
+    steps:
+      - name: github
+        description: Scan GitHub Actions OIDC config and Actions secrets.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: github-scan
+          methodName: scan
+      - name: gcp
+        description: Scan GCP Workload Identity Federation.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: gcp-scan
+          methodName: scan
+      - name: cloudflare
+        description: Scan Cloudflare One / Zero Trust Access.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: cf-scan
+          methodName: scan
+  - name: aggregate
+    description: Build the trust graph; the posture report runs after it.
+    weight: 0
+    dependsOn:
+      - job: scan
+        condition:
+          type: completed
+    steps:
+      - name: build
+        description: Normalize the three scans into the trust graph.
+        weight: 0
+        allowFailure: false
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: trust-graph
+          methodName: build
+          inputs:
+            githubOidcSubjects: ${{ data.findBySpec("github-scan", "oidc_subject") }}
+            githubSecrets: ${{ data.findBySpec("github-scan", "actions_secret") }}
+            gcpWifPools: ${{ data.findBySpec("gcp-scan", "wif_pool") }}
+            gcpWifProviders: ${{ data.findBySpec("gcp-scan", "wif_provider") }}
+            gcpServiceAccounts: ${{ data.findBySpec("gcp-scan", "service_account") }}
+            gcpSaKeys: ${{ data.findBySpec("gcp-scan", "sa_key") }}
+            cfAccessApps: ${{ data.findBySpec("cf-scan", "access_app") }}
+            cfAccessPolicies: ${{ data.findBySpec("cf-scan", "access_policy") }}
+            cfIdentityProviders: ${{ data.findBySpec("cf-scan", "identity_provider") }}
+            cfServiceTokens: ${{ data.findBySpec("cf-scan", "service_token") }}

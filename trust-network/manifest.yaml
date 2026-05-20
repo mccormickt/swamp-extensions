@@ -1,0 +1,59 @@
+manifestVersion: 1
+name: '@mccormick/trust-network'
+version: 2026.05.19.1
+description: >
+  Inventory and report on OIDC trust policies and workload-identity
+  federation across GitHub, Google Cloud, and Cloudflare One.
+
+  Four read-only models compose into a cross-platform trust graph:
+
+  - `@mccormick/trust-network/github`     — GitHub Actions OIDC subject-claim
+                                            customization and Actions
+                                            secrets/variables (classified).
+  - `@mccormick/trust-network/gcp`        — GCP Workload Identity Federation
+                                            pools and providers, service
+                                            accounts, and user-managed keys.
+  - `@mccormick/trust-network/cloudflare` — Cloudflare One / Zero Trust Access
+                                            applications, policies, identity
+                                            providers, service tokens, certs.
+  - `@mccormick/trust-network/graph`      — normalizes the three providers into
+                                            a graph of trust domains,
+                                            identities, and credential edges,
+                                            each annotated with conditional
+                                            access and severity-rated findings.
+
+  The `@mccormick/trust-network/posture` report scores the graph: the share of
+  trust edges using ephemeral credentials, the share gated by conditional
+  access, and a severity-grouped finding list. A `trust-inventory` workflow
+  runs the three scans, builds the graph, and emits the report on a schedule.
+
+  Read-only: models only read provider APIs. No credential material is written
+  to swamp data — only configuration metadata. API tokens are supplied through
+  a vault; GCP uses a short-lived `gcloud` access token (no stored key).
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - github_identity.ts
+  - gcp_federation.ts
+  - cloudflare_access.ts
+  - trust_graph.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports:
+  - trust_report.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - oidc
+  - workload-identity
+  - federation
+  - trust
+  - security
+  - github
+  - gcp
+  - cloudflare
+dependencies: []
