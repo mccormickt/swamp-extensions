@@ -1,17 +1,18 @@
 /**
- * Unit tests for `@mccormick/trust-network/cloudflare`.
+ * Unit tests for `@mccormick/cloudflare/zerotrust`.
  *
  * Covers the pure helpers (`ruleType`, `normalizeAccessPolicy`,
- * `computeDurationDays`) and an end-to-end `scan` against a stubbed `fetch`.
+ * `computeDurationDays`) and an end-to-end `scan` against a stubbed `fetch`
+ * injected into the Cloudflare SDK client.
  */
 import { assertEquals } from "jsr:@std/assert@1";
 import { createModelTestContext } from "jsr:@systeminit/swamp-testing@0.20260519.14";
-import { model } from "./cloudflare_access.ts";
+import { __setCloudflareFetch, model } from "./zerotrust.ts";
 import {
   computeDurationDays,
   normalizeAccessPolicy,
   ruleType,
-} from "./shared/cloudflare.ts";
+} from "./policy.ts";
 
 type ScanCtx = Parameters<typeof model.methods.scan.execute>[1];
 
@@ -106,39 +107,47 @@ function envelope(result: unknown[]): unknown {
     errors: [],
     messages: [],
     result,
-    result_info: { page: 1, total_pages: 1, count: result.length },
+    result_info: {
+      page: 1,
+      per_page: 1000,
+      count: result.length,
+      total_count: result.length,
+      total_pages: 1,
+    },
   };
 }
 
-/** Install a `fetch` stub routed by a pathname predicate; returns a restore fn. */
-function stubFetch(routes: Route[]): () => void {
-  const original = globalThis.fetch;
-  globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
+function jsonResponse(body: unknown, status: number): Promise<Response> {
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+}
+
+/** A `fetch` stub routed by a pathname predicate; install via `__setCloudflareFetch`. */
+function stubFetch(routes: Route[]): typeof fetch {
+  return ((input: string | URL | Request): Promise<Response> => {
     const href = typeof input === "string"
       ? input
       : input instanceof URL
       ? input.href
       : input.url;
-    const path = new URL(href).pathname;
-    const route = routes.find((r) => r.match(path));
+    const url = new URL(href);
+    // The SDK auto-paginates; serve an empty page beyond page 1 to terminate.
+    if (Number(url.searchParams.get("page") ?? "1") > 1) {
+      return jsonResponse(envelope([]), 200);
+    }
+    const route = routes.find((r) => r.match(url.pathname));
     if (!route) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ success: false, errors: [{ code: 7003, message: "no route" }] }),
-          { status: 404 },
-        ),
+      return jsonResponse(
+        { success: false, errors: [{ code: 7003, message: "no route" }] },
+        404,
       );
     }
-    return Promise.resolve(
-      new Response(JSON.stringify(route.body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    return jsonResponse(route.body, 200);
   }) as typeof fetch;
-  return () => {
-    globalThis.fetch = original;
-  };
 }
 
 const SCAN_ROUTES: Route[] = [
@@ -191,7 +200,7 @@ const SCAN_ROUTES: Route[] = [
 // ---------------------------------------------------------------------------
 
 Deno.test("scan discovers apps, policies, idps, and service tokens", async () => {
-  const restore = stubFetch(SCAN_ROUTES);
+  __setCloudflareFetch(stubFetch(SCAN_ROUTES));
   try {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: {
@@ -223,12 +232,12 @@ Deno.test("scan discovers apps, policies, idps, and service tokens", async () =>
     assertEquals(summary.targetsScanned, 1);
     assertEquals(summary.targetsFailed, 0);
   } finally {
-    restore();
+    __setCloudflareFetch(undefined);
   }
 });
 
 Deno.test("scan records a note when an account is inaccessible", async () => {
-  const restore = stubFetch([]); // every request 404s
+  __setCloudflareFetch(stubFetch([])); // every request 404s
   try {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: {
@@ -244,6 +253,6 @@ Deno.test("scan records a note when an account is inaccessible", async () => {
     assertEquals(summary.targetsFailed, 1);
     assertEquals((summary.notes as string[]).length, 1);
   } finally {
-    restore();
+    __setCloudflareFetch(undefined);
   }
 });

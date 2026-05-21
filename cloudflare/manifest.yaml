@@ -1,0 +1,37 @@
+manifestVersion: 1
+name: '@mccormick/cloudflare'
+version: 2026.05.21.1
+description: >
+  Cloudflare One / Zero Trust Access discovery for swamp.
+
+  The `@mccormick/cloudflare/zerotrust` model inventories, per account: Access
+  applications and their policies (rule sets normalized into conditional-access
+  factors), configured identity providers, service tokens, and mTLS
+  certificates. The `scan` method fans out across every configured account; a
+  per-account or per-app failure is recorded in the scan summary's `notes` and
+  never aborts the run.
+
+  Read-only: the model only reads the Cloudflare API — nothing is created,
+  changed, or deleted. No credential material is written to swamp data, only
+  configuration metadata. The API token is supplied through a vault. Built on
+  the official `cloudflare` TypeScript SDK.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - zerotrust.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - cloudflare
+  - zero-trust
+  - access
+  - identity
+  - security
+dependencies: []

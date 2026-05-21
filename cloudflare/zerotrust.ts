@@ -1,5 +1,5 @@
 /**
- * `@mccormick/trust-network/cloudflare` — Cloudflare One / Zero Trust Access
+ * `@mccormick/cloudflare/zerotrust` — Cloudflare One / Zero Trust Access
  * discovery.
  *
  * Cloudflare One is both a relying party and an identity provider. Access
@@ -15,10 +15,14 @@
  * every configured account; a per-account or per-app failure is recorded in
  * the summary's `notes` and never aborts the run.
  *
+ * Transport is the official `cloudflare` TypeScript SDK — authentication,
+ * retry/backoff, and pagination are handled by the SDK.
+ *
  * @module
  */
 import { z } from "npm:zod@4";
 import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
+import Cloudflare from "npm:cloudflare@6.2.0";
 import {
   CfAccessAppSchema,
   CfAccessPolicySchema,
@@ -27,18 +31,13 @@ import {
   CfServiceTokenSchema,
   sanitizeInstanceName,
   ScanSummarySchema,
-} from "./shared/schema.ts";
-import {
-  assertHttpsUrl,
-  bearerHeaders,
-  fetchCloudflarePaginated,
-  HttpError,
-} from "./shared/http.ts";
+} from "./schema.ts";
 import {
   computeDurationDays,
   normalizeAccessPolicy,
   type RawAccessPolicy,
-} from "./shared/cloudflare.ts";
+} from "./policy.ts";
+import { assertHttpsUrl, redactSecrets } from "./util.ts";
 
 /** Global arguments for the Cloudflare One scanner. */
 const GlobalArgs = z.object({
@@ -47,19 +46,40 @@ const GlobalArgs = z.object({
   ),
   cloudflareToken: z.string().describe(
     "Cloudflare API token; supply via " +
-      '${{ vault.get("trust-network", "CLOUDFLARE_TOKEN") }}',
+      '${{ vault.get("cloudflare", "CLOUDFLARE_TOKEN") }}',
   ).meta({ sensitive: true }),
   apiBaseUrl: z.string().default("https://api.cloudflare.com/client/v4")
     .describe("Cloudflare API v4 base URL"),
 });
 
-/** Render an unknown error as a redaction-safe, single-line string. */
-function errMsg(err: unknown): string {
-  if (err instanceof HttpError || err instanceof Error) return err.message;
-  return String(err);
+/** The `fetch` implementation type the Cloudflare SDK client accepts. */
+type CloudflareFetch = NonNullable<
+  NonNullable<ConstructorParameters<typeof Cloudflare>[0]>["fetch"]
+>;
+
+/**
+ * Test seam: an injected `fetch` the Cloudflare SDK client is built with. In
+ * production it stays `undefined` and the SDK uses its default; tests install
+ * a stub via {@link __setCloudflareFetch}.
+ */
+let testFetch: CloudflareFetch | undefined;
+
+/**
+ * Test-only: override the `fetch` the SDK client is constructed with. Pass
+ * `undefined` to restore the default. The `as unknown` cast bridges a cosmetic
+ * difference between Deno's global `fetch` type and the SDK's `Fetch` type —
+ * the two are interchangeable at runtime.
+ */
+export function __setCloudflareFetch(f: typeof fetch | undefined): void {
+  testFetch = f as unknown as CloudflareFetch | undefined;
 }
 
-/** Raw Access application as returned by the Cloudflare API. */
+/** Render an unknown error as a redaction-safe, single-line string. */
+function errMsg(err: unknown): string {
+  return redactSecrets(err instanceof Error ? err.message : String(err));
+}
+
+/** Raw Access application — the subset of fields this model reads. */
 interface RawApp {
   id: string;
   name?: string;
@@ -69,7 +89,7 @@ interface RawApp {
   saas_app?: { auth_type?: string };
 }
 
-/** Raw identity provider as returned by the Cloudflare API. */
+/** Raw identity provider — the subset of fields this model reads. */
 interface RawIdp {
   id: string;
   name?: string;
@@ -77,7 +97,7 @@ interface RawIdp {
   config?: { issuer_url?: string };
 }
 
-/** Raw service token as returned by the Cloudflare API. */
+/** Raw service token — the subset of fields this model reads. */
 interface RawServiceToken {
   id: string;
   name?: string;
@@ -86,7 +106,7 @@ interface RawServiceToken {
   expires_at?: string;
 }
 
-/** Raw mTLS certificate as returned by the Cloudflare API. */
+/** Raw mTLS certificate — the subset of fields this model reads. */
 interface RawCertificate {
   id: string;
   name?: string;
@@ -96,13 +116,13 @@ interface RawCertificate {
 }
 
 /**
- * `@mccormick/trust-network/cloudflare` — discovers Cloudflare One / Zero Trust
+ * `@mccormick/cloudflare/zerotrust` — discovers Cloudflare One / Zero Trust
  * Access applications, policies, identity providers, service tokens, and mTLS
  * certificates across the configured accounts. Read-only.
  */
 export const model = {
-  type: "@mccormick/trust-network/cloudflare",
-  version: "2026.05.19.1",
+  type: "@mccormick/cloudflare/zerotrust",
+  version: "2026.05.21.1",
   globalArguments: GlobalArgs,
   resources: {
     access_app: {
@@ -154,7 +174,12 @@ export const model = {
         if (g.accountIds.length > 0 && !g.cloudflareToken) {
           throw new Error("cloudflareToken is required to scan accounts");
         }
-        const headers = bearerHeaders(g.cloudflareToken);
+        const client = new Cloudflare({
+          apiToken: g.cloudflareToken,
+          baseURL: base,
+          maxRetries: 4,
+          fetch: testFetch,
+        });
 
         const handles = [];
         const notes: string[] = [];
@@ -170,13 +195,16 @@ export const model = {
 
         for (const accountId of g.accountIds) {
           try {
-            const acct = `${base}/accounts/${accountId}/access`;
+            let apps = 0;
+            let idps = 0;
+            let tokens = 0;
 
-            const apps = await fetchCloudflarePaginated<RawApp>(
-              `${acct}/apps`,
-              { headers },
-            );
-            for (const app of apps) {
+            for await (
+              const item of client.zeroTrust.access.applications.list({
+                account_id: accountId,
+              })
+            ) {
+              const app = item as unknown as RawApp;
               handles.push(
                 await context.writeResource(
                   "access_app",
@@ -194,13 +222,18 @@ export const model = {
                 ),
               );
               counts.access_app++;
+              apps++;
 
               try {
-                const policies = await fetchCloudflarePaginated<
-                  RawAccessPolicy
-                >(`${acct}/apps/${app.id}/policies`, { headers });
-                for (const raw of policies) {
-                  const policy = normalizeAccessPolicy(raw, accountId, app.id);
+                for await (
+                  const rawItem of client.zeroTrust.access.applications
+                    .policies.list(app.id, { account_id: accountId })
+                ) {
+                  const policy = normalizeAccessPolicy(
+                    rawItem as unknown as RawAccessPolicy,
+                    accountId,
+                    app.id,
+                  );
                   handles.push(
                     await context.writeResource(
                       "access_policy",
@@ -219,11 +252,12 @@ export const model = {
               }
             }
 
-            const idps = await fetchCloudflarePaginated<RawIdp>(
-              `${acct}/identity_providers`,
-              { headers },
-            );
-            for (const idp of idps) {
+            for await (
+              const item of client.zeroTrust.identityProviders.list({
+                account_id: accountId,
+              })
+            ) {
+              const idp = item as unknown as RawIdp;
               handles.push(
                 await context.writeResource(
                   "identity_provider",
@@ -239,13 +273,15 @@ export const model = {
                 ),
               );
               counts.identity_provider++;
+              idps++;
             }
 
-            const tokens = await fetchCloudflarePaginated<RawServiceToken>(
-              `${acct}/service_tokens`,
-              { headers },
-            );
-            for (const token of tokens) {
+            for await (
+              const item of client.zeroTrust.access.serviceTokens.list({
+                account_id: accountId,
+              })
+            ) {
+              const token = item as unknown as RawServiceToken;
               const createdAt = token.created_at ?? null;
               const expiresAt = token.expires_at ?? null;
               handles.push(
@@ -265,13 +301,15 @@ export const model = {
                 ),
               );
               counts.service_token++;
+              tokens++;
             }
 
-            const certs = await fetchCloudflarePaginated<RawCertificate>(
-              `${acct}/certificates`,
-              { headers },
-            );
-            for (const cert of certs) {
+            for await (
+              const item of client.zeroTrust.access.certificates.list({
+                account_id: accountId,
+              })
+            ) {
+              const cert = item as unknown as RawCertificate;
               handles.push(
                 await context.writeResource(
                   "mtls_cert",
@@ -294,12 +332,7 @@ export const model = {
             context.logger.info(
               "cloudflare: account {account} — {apps} apps, {idps} idps, " +
                 "{tokens} tokens",
-              {
-                account: accountId,
-                apps: apps.length,
-                idps: idps.length,
-                tokens: tokens.length,
-              },
+              { account: accountId, apps, idps, tokens },
             );
           } catch (err) {
             targetsFailed++;

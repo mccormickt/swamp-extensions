@@ -3,8 +3,8 @@
  *
  * Bearer-authenticated JSON requests with a per-attempt timeout, retry/backoff
  * on 429 and 5xx (honoring `Retry-After` and GitHub rate-limit headers),
- * pagination for all three providers' conventions, and secret redaction in
- * error output.
+ * pagination for the GitHub and GCP providers' conventions, and secret
+ * redaction in error output.
  *
  * @module
  */
@@ -292,41 +292,6 @@ export async function fetchGcpPaginated<T = unknown>(
       ? body.nextPageToken
       : undefined;
     if (!pageToken) break;
-  }
-  return out;
-}
-
-/** Cloudflare API v4 response envelope. */
-export interface CloudflareEnvelope<T> {
-  success: boolean;
-  errors: { code: number; message: string }[];
-  result: T[] | null;
-  result_info?: { page: number; total_pages: number; count: number };
-}
-
-/**
- * Follow Cloudflare `result_info` page pagination, returning the concatenated
- * `result` arrays. Throws if the envelope reports `success: false`.
- */
-export async function fetchCloudflarePaginated<T = unknown>(
-  url: string,
-  opts: FetchJsonOptions = {},
-): Promise<T[]> {
-  const out: T[] = [];
-  let totalPages = 1;
-  for (let page = 1; page <= totalPages && page <= MAX_PAGES; page++) {
-    const u = new URL(url);
-    u.searchParams.set("page", String(page));
-    u.searchParams.set("per_page", "50");
-    const env = await fetchJson<CloudflareEnvelope<T>>(u.toString(), opts);
-    if (!env.success) {
-      const detail = (env.errors ?? [])
-        .map((e) => `${e.code} ${e.message}`)
-        .join("; ");
-      throw new Error(`Cloudflare API error for ${stripUrl(url)}: ${detail}`);
-    }
-    if (Array.isArray(env.result)) out.push(...env.result);
-    totalPages = env.result_info?.total_pages ?? 1;
   }
   return out;
 }

@@ -1,35 +1,29 @@
 manifestVersion: 1
 name: '@mccormick/trust-network'
-version: 2026.05.20.1
+version: 2026.05.21.1
 description: >
-  Inventory and report on OIDC trust policies and workload-identity
-  federation across GitHub, Google Cloud, and Cloudflare One.
+  Inventory and report on OIDC trust policies and workload-identity federation
+  across GitHub, Google Cloud, and Cloudflare One.
 
-  Four read-only models compose into a cross-platform trust graph:
+  Three read-only models compose into a cross-platform trust graph. The
+  `github` model discovers GitHub Actions OIDC subject-claim customization and
+  classified Actions secrets; the `gcp` model discovers Workload Identity
+  Federation pools, providers, service accounts, and user-managed keys; the
+  `graph` model normalizes the three providers into a graph of trust domains,
+  identities, and credential edges annotated with conditional access and
+  severity-rated findings.
 
-  - `@mccormick/trust-network/github`     — GitHub Actions OIDC subject-claim
-                                            customization and Actions
-                                            secrets/variables (classified).
-  - `@mccormick/trust-network/gcp`        — GCP Workload Identity Federation
-                                            pools and providers, service
-                                            accounts, and user-managed keys.
-  - `@mccormick/trust-network/cloudflare` — Cloudflare One / Zero Trust Access
-                                            applications, policies, identity
-                                            providers, service tokens, certs.
-  - `@mccormick/trust-network/graph`      — normalizes the three providers into
-                                            a graph of trust domains,
-                                            identities, and credential edges,
-                                            each annotated with conditional
-                                            access and severity-rated findings.
+  Cloudflare One / Zero Trust Access scanning is provided by the
+  `@mccormick/cloudflare` extension, a declared dependency — the
+  `trust-inventory` and `trust-gate` workflows wire its `zerotrust` model into
+  the graph.
 
   The `@mccormick/trust-network/posture` report scores the graph: the share of
   trust edges using ephemeral credentials, the share gated by conditional
   access, and a severity-grouped finding list. A `trust-inventory` workflow
-  runs the three scans, builds the graph, and emits the report on a schedule.
-
-  A `trust-gate` workflow turns that posture into a CI pass/fail check: the
-  graph model's `assert_posture` method fails the build when findings or
-  credential/access coverage breach configured thresholds.
+  runs the three scans, builds the graph, and emits the report on a schedule. A
+  `trust-gate` workflow turns that posture into a CI pass/fail check, failing
+  the build when findings or coverage breach configured thresholds.
 
   Read-only: models only read provider APIs. No credential material is written
   to swamp data — only configuration metadata. API tokens are supplied through
@@ -40,7 +34,6 @@ paths:
 models:
   - github_identity.ts
   - gcp_federation.ts
-  - cloudflare_access.ts
   - trust_graph.ts
 workflows: []
 vaults: []
@@ -60,4 +53,5 @@ labels:
   - github
   - gcp
   - cloudflare
-dependencies: []
+dependencies:
+  - '@mccormick/cloudflare'

@@ -1,7 +1,7 @@
 /**
- * `@mccormick/trust-network` — Cloudflare One response-parsing helpers.
+ * `@mccormick/cloudflare` — Cloudflare One response-parsing helpers.
  *
- * Pure functions shared by the `cloudflare` model and its tests: Access-policy
+ * Pure functions shared by the `zerotrust` model and its tests: Access-policy
  * rule normalization and service-token duration math.
  *
  * @module
