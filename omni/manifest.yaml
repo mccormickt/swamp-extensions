@@ -1,0 +1,41 @@
+manifestVersion: 1
+name: '@mccormick/omni'
+version: 2026.05.21.1
+description: >
+  Talos node discovery for swamp, via Sidero Omni.
+
+  Omni is the control plane for fleets of Talos Linux machines. The
+  `@mccormick/omni/inventory` model asks Omni for that fleet state and turns it
+  into a typed swamp inventory: one `node` resource per managed machine
+  (hardware, network, Talos version, cluster role, connection and readiness
+  state), one `cluster` resource per cluster with rolled-up machine counts, and
+  a single `summary` roll-up.
+
+  The `discover` method fans out across Omni's COSI resources — machine
+  statuses, cluster-machine statuses, machine identities, and clusters — and
+  merges them by machine UUID in one execution.
+
+  Read-only: the model only issues `omnictl get` calls and never mutates Omni
+  state. Transport is the `omnictl` CLI authenticated with an Omni service
+  account passed through the environment; the service-account key is supplied
+  through a vault, marked sensitive, and redacted from logs and error text.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - inventory.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - omni
+  - talos
+  - kubernetes
+  - inventory
+  - siderolabs
+dependencies: []
