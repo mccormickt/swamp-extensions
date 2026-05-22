@@ -326,13 +326,14 @@ export type ScanSummary = z.infer<typeof ScanSummarySchema>;
 // Normalized trust-graph schemas — emitted by the `graph` model
 // ---------------------------------------------------------------------------
 
-/** A node in the trust graph: an org, project, account, or external issuer. */
+/** A node in the trust graph: an org, project, account, app, or issuer. */
 export const TrustDomainSchema = z.object({
   id: z.string().describe(
-    "Stable id, e.g. `github:org/acme`, `gcp:project/p-1`, `external:host`",
+    "Stable id, e.g. `github:org/acme`, `gcp:project/p-1`, " +
+      "`cloudflare:app/<acct>/<appId>`, `external:host`",
   ),
   platform: PlatformSchema,
-  kind: z.enum(["org", "project", "account", "idp", "external"]),
+  kind: z.enum(["org", "project", "account", "app", "idp", "external"]),
   displayName: z.string(),
   issuerUri: z.string().nullable().describe(
     "OIDC issuer when this domain acts as an identity provider",
@@ -418,10 +419,13 @@ export type TrustInventory = z.infer<typeof TrustInventorySchema>;
 /**
  * Derive the stable id of a trust edge from its defining attributes. Two edges
  * with the same source, target, issuer, and credential type collapse to one.
+ * The target is keyed by its stable `targetDomainId` (not only the display
+ * `targetLabel`) so distinct nodes that share a display name stay distinct.
  */
 export function trustEdgeId(parts: {
   sourceDomainId: string;
   sourceLabel: string;
+  targetDomainId: string;
   targetLabel: string;
   sourceIssuer: string;
   credentialType: CredentialType;
@@ -431,6 +435,7 @@ export function trustEdgeId(parts: {
       [
         parts.sourceDomainId,
         parts.sourceLabel,
+        parts.targetDomainId,
         parts.targetLabel,
         parts.sourceIssuer,
         parts.credentialType,

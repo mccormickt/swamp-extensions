@@ -30,8 +30,10 @@ federation.
   of conditional-access factors.
 - `@mccormick/trust-network/graph` — reads the three scans and normalizes them
   into a **trust graph**: trust domains (nodes), identities, and trust edges.
-  Each edge records its issuer, audience, subject pattern, claim conditions,
-  credential type, whether it is ephemeral, its conditional-access factors, and
+  GitHub orgs, GCP projects, Cloudflare accounts, individual Cloudflare Access
+  applications, and identity providers are each a trust domain. Each edge
+  records its issuer, audience, subject pattern, claim conditions, credential
+  type, whether it is ephemeral, its conditional-access factors, and
   severity-rated findings.
 
 A method-scope report, `@mccormick/trust-network/posture`, runs after the graph
@@ -44,7 +46,7 @@ GitHub's against the GitHub repositories its attribute condition admits.
 ## Read-only and credential-safe
 
 Every model only **reads** provider APIs. Nothing is created, changed, or
-deleted. No credential material is ever written to swamp data — secret *values*
+deleted. No credential material is ever written to swamp data — secret _values_
 are not even requested (GitHub does not expose them; GCP key material is never
 downloaded). Only configuration metadata is stored. API tokens are supplied
 through a vault and redacted from logs and error messages.
@@ -67,7 +69,7 @@ A fine-grained personal access token (or GitHub App installation token) with
 **read-only** organization access:
 
 - `Administration: read` — repository OIDC subject-claim customization
-- `Secrets: read` and `Variables: read` — Actions secret/variable *names*
+- `Secrets: read` and `Variables: read` — Actions secret/variable _names_
 - `Environments: read` — environment-scoped secrets
 - `Metadata: read` — repository enumeration
 
@@ -117,8 +119,10 @@ swamp workflow run trust-inventory
 swamp report get @mccormick/trust-network/posture --model trust-graph --markdown
 ```
 
-Each discovery model also runs on its own — `swamp model method run github-scan
-scan`, and likewise for `gcp-scan` and `cf-scan`.
+Each discovery model also runs on its own —
+`swamp model method run github-scan
+scan`, and likewise for `gcp-scan` and
+`cf-scan`.
 
 ### How the graph is wired
 
@@ -130,15 +134,15 @@ argument. The `trust-inventory` workflow supplies them with CEL
 # trust-inventory workflow — the `build` step's inputs
 inputs:
   githubOidcSubjects: ${{ data.findBySpec("github-scan", "oidc_subject") }}
-  githubSecrets:      ${{ data.findBySpec("github-scan", "actions_secret") }}
-  gcpWifPools:        ${{ data.findBySpec("gcp-scan", "wif_pool") }}
-  gcpWifProviders:    ${{ data.findBySpec("gcp-scan", "wif_provider") }}
+  githubSecrets: ${{ data.findBySpec("github-scan", "actions_secret") }}
+  gcpWifPools: ${{ data.findBySpec("gcp-scan", "wif_pool") }}
+  gcpWifProviders: ${{ data.findBySpec("gcp-scan", "wif_provider") }}
   gcpServiceAccounts: ${{ data.findBySpec("gcp-scan", "service_account") }}
-  gcpSaKeys:          ${{ data.findBySpec("gcp-scan", "sa_key") }}
-  cfAccessApps:        ${{ data.findBySpec("cf-scan", "access_app") }}
-  cfAccessPolicies:    ${{ data.findBySpec("cf-scan", "access_policy") }}
+  gcpSaKeys: ${{ data.findBySpec("gcp-scan", "sa_key") }}
+  cfAccessApps: ${{ data.findBySpec("cf-scan", "access_app") }}
+  cfAccessPolicies: ${{ data.findBySpec("cf-scan", "access_policy") }}
   cfIdentityProviders: ${{ data.findBySpec("cf-scan", "identity_provider") }}
-  cfServiceTokens:     ${{ data.findBySpec("cf-scan", "service_token") }}
+  cfServiceTokens: ${{ data.findBySpec("cf-scan", "service_token") }}
 ```
 
 To build the graph outside the workflow, pass the same data with
@@ -178,14 +182,16 @@ Representative findings:
 | `GITHUB_STATIC_CLOUD_CREDENTIAL` | high     | An Actions secret is named like a static cloud credential.    |
 | `CF_ACCESS_POLICY_ALLOW_ALL`     | high     | An Access policy allows everyone / has no `require` block.    |
 | `CF_ACCESS_NO_POSTURE`           | medium   | An Access app's policies lack a device-posture or MFA factor. |
+| `CF_IDP_OPEN_USER_POOL`          | medium   | An IdP (generic Google, GitHub, …) admits any public account. |
 | `CF_SERVICE_TOKEN_NO_EXPIRY`     | medium   | A Cloudflare service token never expires or is long-lived.    |
+| `CF_IDP_UNREFERENCED`            | low      | A configured IdP is permitted by no Access application.       |
 
 ## Enforcement gate
 
-The posture report *observes*; the enforcement gate *fails CI* when posture
+The posture report _observes_; the enforcement gate _fails CI_ when posture
 regresses. The `graph` model's `assert_posture` method reads the inventory
-roll-up that `build` produced and throws when it breaches configured
-thresholds — all method arguments, all permissive by default:
+roll-up that `build` produced and throws when it breaches configured thresholds
+— all method arguments, all permissive by default:
 
 | Threshold                 | Default   | Fails when                                   |
 | ------------------------- | --------- | -------------------------------------------- |
@@ -195,8 +201,8 @@ thresholds — all method arguments, all permissive by default:
 | `minEphemeralPct`         | `0`       | ephemeral-credential coverage drops below it |
 | `minConditionalAccessPct` | `0`       | conditional-access coverage drops below it   |
 
-The `trust-gate` workflow is the CI entrypoint — it runs the three scans,
-builds the graph, then asserts:
+The `trust-gate` workflow is the CI entrypoint — it runs the three scans, builds
+the graph, then asserts:
 
 ```sh
 swamp workflow run trust-gate
@@ -215,13 +221,12 @@ carries no schedule. Tune the gate per environment in the `assert` step's
   pin). The extension does not fully evaluate CEL conditions against concrete
   GitHub claim sets.
 - **Best-effort scans.** A provider scan does not abort on one bad
-  org/project/account; the failure is recorded in a `notes` array on the
-  scan's summary resource and surfaced in the report.
+  org/project/account; the failure is recorded in a `notes` array on the scan's
+  summary resource and surfaced in the report.
 - **Rate limits.** Large GitHub organizations generate many per-repository
   calls. Set `repos` explicitly to scope a scan to specific repositories.
-- **Token lifetime.** A `gcloud` access token lasts about an hour — long
-  enough for one scan. Re-run `gcloud auth login` if a scan reports an expired
-  token.
+- **Token lifetime.** A `gcloud` access token lasts about an hour — long enough
+  for one scan. Re-run `gcloud auth login` if a scan reports an expired token.
 
 ## License
 

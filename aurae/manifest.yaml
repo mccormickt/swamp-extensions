@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/aurae'
-version: 2026.05.17.1
+version: 2026.05.19.1
 description: >
   Swamp execution driver that runs a method's `run` command inside an
   aurae cell via `aer`. Allocates the cell, starts the executable,

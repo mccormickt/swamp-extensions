@@ -116,7 +116,16 @@ const AssertPostureArgs = z.object({
  */
 export const model = {
   type: "@mccormick/trust-network/graph",
-  version: "2026.05.20.1",
+  version: "2026.05.21.2",
+  upgrades: [
+    {
+      toVersion: "2026.05.21.2",
+      description:
+        "Cloudflare slice: Access apps as trust domains and targetDomainId " +
+        "in edge ids. No globalArguments change.",
+      upgradeAttributes: (old) => old,
+    },
+  ],
   reports: ["@mccormick/trust-network/posture"],
   globalArguments: GlobalArgs,
   resources: {

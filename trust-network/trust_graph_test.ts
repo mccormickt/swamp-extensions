@@ -6,6 +6,7 @@
  */
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStringIncludes,
 } from "jsr:@std/assert@1";
@@ -136,7 +137,11 @@ Deno.test("deriveGithubSlice builds org domains and static-credential edges", ()
         looksLikeCloudCredential: true,
         matchedPattern: "aws-key",
       }),
-      secret({ org: "acme", name: "NPM_TOKEN", looksLikeCloudCredential: false }),
+      secret({
+        org: "acme",
+        name: "NPM_TOKEN",
+        looksLikeCloudCredential: false,
+      }),
     ],
     NOW,
   );
@@ -170,7 +175,10 @@ Deno.test("computeInventory scores ephemeral and conditional-access shares", () 
     [
       edge({ id: "e1", ephemeral: true }),
       edge({ id: "e2", ephemeral: true }),
-      edge({ id: "e3", conditionalAccess: { present: true, factors: ["mfa"] } }),
+      edge({
+        id: "e3",
+        conditionalAccess: { present: true, factors: ["mfa"] },
+      }),
       edge({ id: "e4" }),
     ],
     [],
@@ -216,7 +224,10 @@ Deno.test("build writes domains, edges, and a scored inventory", async () => {
   const inventory = written.find((r) => r.specName === "inventory")!.data;
   assertEquals(inventory.edgeCount, 1);
   assertEquals(inventory.ephemeralPct, 0);
-  assertEquals((inventory.byCredentialType as Record<string, number>)["github-secret"], 1);
+  assertEquals(
+    (inventory.byCredentialType as Record<string, number>)["github-secret"],
+    1,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -474,12 +485,175 @@ Deno.test("deriveCloudflareSlice recognizes a posture-gated Access app", () => {
 });
 
 Deno.test("deriveCloudflareSlice flags a long-lived service token", () => {
-  const open = deriveCloudflareSlice([], [], [], [cfToken({ durationDays: null })], NOW);
+  const open = deriveCloudflareSlice([], [], [], [
+    cfToken({ durationDays: null }),
+  ], NOW);
   assertEquals(open.edges[0].credentialType, "cf-service-token");
   assertEquals(open.edges[0].findings[0].code, "CF_SERVICE_TOKEN_NO_EXPIRY");
 
-  const short = deriveCloudflareSlice([], [], [], [cfToken({ durationDays: 30 })], NOW);
+  const short = deriveCloudflareSlice([], [], [], [
+    cfToken({ durationDays: 30 }),
+  ], NOW);
   assertEquals(short.edges[0].findings.length, 0);
+});
+
+Deno.test("deriveCloudflareSlice flags an open-user-pool identity provider", () => {
+  // Generic `google` / `github` logins admit any account at the provider.
+  const open = deriveCloudflareSlice(
+    [],
+    [],
+    [cfIdp({ type: "google" })],
+    [],
+    NOW,
+  );
+  const openEdge = open.edges.find((e) =>
+    e.targetLabel.startsWith("Cloudflare account")
+  )!;
+  assertEquals(openEdge.findings[0].code, "CF_IDP_OPEN_USER_POOL");
+
+  // Google Workspace (`google-apps`) is domain-scoped — not flagged.
+  const scoped = deriveCloudflareSlice(
+    [],
+    [],
+    [cfIdp({ type: "google-apps" })],
+    [],
+    NOW,
+  );
+  const scopedEdge = scoped.edges.find((e) =>
+    e.targetLabel.startsWith("Cloudflare account")
+  )!;
+  assertEquals(scopedEdge.findings.length, 0);
+});
+
+Deno.test("deriveCloudflareSlice links an IdP to the apps that scope to it", () => {
+  const { edges } = deriveCloudflareSlice(
+    [cfApp({ allowedIdps: ["idp-1"] })],
+    [],
+    [cfIdp({ idpId: "idp-1" })],
+    [],
+    NOW,
+  );
+  const idpToApp = edges.find((e) =>
+    e.sourceLabel.startsWith("google IdP") &&
+    e.targetLabel === "Access app Internal Wiki"
+  );
+  assertExists(idpToApp);
+  assertEquals(idpToApp.credentialType, "oidc-federation");
+  // The edge targets the app's own domain node, not the account.
+  assertEquals(idpToApp.targetDomainId, "cloudflare:app/acct-1/app-1");
+
+  // An app scoped to a different IdP yields no IdP→app edge.
+  const other = deriveCloudflareSlice(
+    [cfApp({ allowedIdps: ["idp-2"] })],
+    [],
+    [cfIdp({ idpId: "idp-1" })],
+    [],
+    NOW,
+  );
+  assertEquals(
+    other.edges.some((e) =>
+      e.sourceLabel.startsWith("google IdP") &&
+      e.targetLabel === "Access app Internal Wiki"
+    ),
+    false,
+  );
+});
+
+Deno.test("deriveCloudflareSlice flags an IdP no Access application references", () => {
+  const { edges } = deriveCloudflareSlice(
+    [cfApp({ allowedIdps: ["idp-2"] })],
+    [],
+    [cfIdp({ idpId: "idp-1" })],
+    [],
+    NOW,
+  );
+  const idpEdge = edges.find((e) =>
+    e.targetLabel.startsWith("Cloudflare account")
+  )!;
+  assertEquals(
+    idpEdge.findings.some((f) => f.code === "CF_IDP_UNREFERENCED"),
+    true,
+  );
+});
+
+Deno.test("build links Cloudflare IdPs to the apps that scope to them", async () => {
+  const { context, getWrittenResources } = createModelTestContext({});
+  await model.methods.build.execute(
+    {
+      cfAccessApps: [cfApp({ allowedIdps: ["idp-1"] })],
+      cfIdentityProviders: [cfIdp({ idpId: "idp-1" })],
+    },
+    context as BuildCtx,
+  );
+  const edges = getWrittenResources()
+    .filter((r) => r.specName === "trust_edge")
+    .map((r) => r.data as TrustEdge);
+  assertEquals(
+    edges.some((e) =>
+      e.sourceLabel.startsWith("google IdP") &&
+      e.targetLabel === "Access app Internal Wiki"
+    ),
+    true,
+  );
+});
+
+Deno.test("deriveCloudflareSlice represents each Access app as a trust domain", () => {
+  const { domains } = deriveCloudflareSlice([cfApp({})], [], [], [], NOW);
+  const appDomain = domains.find((d) => d.kind === "app");
+  assertExists(appDomain);
+  assertEquals(appDomain.id, "cloudflare:app/acct-1/app-1");
+  assertEquals(appDomain.platform, "cloudflare");
+});
+
+Deno.test("deriveCloudflareSlice account→app edge is not a self-loop", () => {
+  const { edges } = deriveCloudflareSlice([cfApp({})], [], [], [], NOW);
+  const appEdge = edges.find((e) =>
+    e.targetLabel === "Access app Internal Wiki"
+  )!;
+  assertEquals(appEdge.sourceDomainId, "cloudflare:account/acct-1");
+  assertEquals(appEdge.targetDomainId, "cloudflare:app/acct-1/app-1");
+});
+
+Deno.test("deriveCloudflareSlice keeps distinct edge ids for same-named apps", () => {
+  const { edges } = deriveCloudflareSlice(
+    [
+      cfApp({ appId: "app-1", name: "Wiki" }),
+      cfApp({ appId: "app-2", name: "Wiki" }),
+    ],
+    [],
+    [],
+    [],
+    NOW,
+  );
+  const appEdges = edges.filter((e) => e.targetLabel === "Access app Wiki");
+  assertEquals(appEdges.length, 2);
+  // Distinct apps must not collapse onto one edge id (data-loss regression).
+  assertEquals(new Set(appEdges.map((e) => e.id)).size, 2);
+});
+
+Deno.test("deriveCloudflareSlice flags only public-consumer IdP types", () => {
+  for (const type of ["yandex", "facebook", "linkedin"]) {
+    const { edges } = deriveCloudflareSlice([], [], [cfIdp({ type })], [], NOW);
+    const idpEdge = edges.find((e) =>
+      e.targetLabel.startsWith("Cloudflare account")
+    )!;
+    assertEquals(
+      idpEdge.findings.some((f) => f.code === "CF_IDP_OPEN_USER_POOL"),
+      true,
+      `${type} should be flagged`,
+    );
+  }
+  for (const type of ["azureAD", "oidc", "okta"]) {
+    const { edges } = deriveCloudflareSlice([], [], [cfIdp({ type })], [], NOW);
+    const idpEdge = edges.find((e) =>
+      e.targetLabel.startsWith("Cloudflare account")
+    )!;
+    assertEquals(
+      idpEdge.findings.some((f) => f.code === "CF_IDP_OPEN_USER_POOL"),
+      false,
+      `${type} should not be flagged`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -611,7 +785,10 @@ Deno.test("assert_posture honors the maxMedium threshold", async () => {
     },
   });
   assertEquals(
-    await model.methods.assert_posture.execute({}, lenient.context as AssertCtx),
+    await model.methods.assert_posture.execute(
+      {},
+      lenient.context as AssertCtx,
+    ),
     { dataHandles: [] },
   );
   // ...but fail once maxMedium is tightened below the count.

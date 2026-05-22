@@ -13,6 +13,7 @@ import {
   type CfAccessPolicy,
   type CfIdentityProvider,
   type CfServiceToken,
+  type ConditionalAccess,
   type Finding,
   type GcpSaKey,
   type GcpServiceAccount,
@@ -85,6 +86,22 @@ const FINDING_CATALOG: Readonly<
     recommendation:
       "Add a device-posture or MFA `require` rule to the application's " +
       "Access policy.",
+  },
+  CF_IDP_OPEN_USER_POOL: {
+    severity: "medium",
+    title: "Identity provider admits any account at a public provider",
+    recommendation:
+      "Generic Google, GitHub, and similar consumer logins do not bound the " +
+      "user pool — only Access policies do. Ensure every policy using this " +
+      "IdP has an explicit identity or group `require` rule, or switch to a " +
+      "domain-scoped IdP such as Google Workspace.",
+  },
+  CF_IDP_UNREFERENCED: {
+    severity: "low",
+    title: "Configured identity provider is not used by any Access application",
+    recommendation:
+      "Remove the unused identity provider, or scope an application to it. " +
+      "An unused IdP is latent attack surface and configuration drift.",
   },
   CF_SERVICE_TOKEN_NO_EXPIRY: {
     severity: "medium",
@@ -166,6 +183,14 @@ export function gcpProjectDomainId(project: string): string {
 /** Trust-domain id for a Cloudflare account. */
 export function cloudflareAccountDomainId(accountId: string): string {
   return `cloudflare:account/${accountId}`;
+}
+
+/** Trust-domain id for a Cloudflare Access application. */
+export function cloudflareAppDomainId(
+  accountId: string,
+  appId: string,
+): string {
+  return `cloudflare:app/${accountId}/${appId}`;
 }
 
 /** Add a domain to the map if not already present; return its id. */
@@ -250,6 +275,7 @@ export function deriveGithubSlice(
       id: trustEdgeId({
         sourceDomainId,
         sourceLabel,
+        targetDomainId: EXTERNAL_UNKNOWN_DOMAIN_ID,
         targetLabel,
         sourceIssuer: STATIC_ISSUER,
         credentialType: "github-secret",
@@ -455,6 +481,7 @@ export function deriveGcpSlice(
         id: trustEdgeId({
           sourceDomainId,
           sourceLabel,
+          targetDomainId: projectDomainId,
           targetLabel: target.label,
           sourceIssuer,
           credentialType: "oidc-federation",
@@ -497,6 +524,7 @@ export function deriveGcpSlice(
       id: trustEdgeId({
         sourceDomainId: EXTERNAL_UNKNOWN_DOMAIN_ID,
         sourceLabel,
+        targetDomainId: projectDomainId,
         targetLabel,
         sourceIssuer: STATIC_ISSUER,
         credentialType: "sa-key",
@@ -533,10 +561,99 @@ export function deriveGcpSlice(
 // ---------------------------------------------------------------------------
 
 /**
+ * Cloudflare identity-provider types whose user pool is an entire public
+ * provider: any account at the provider can authenticate, so only Access
+ * policies restrict who reaches an application. Domain-scoped or managed IdPs
+ * (Google Workspace, Okta, Entra ID, generic OIDC/SAML) are excluded — their
+ * user pool is already bounded by the IdP itself.
+ */
+const OPEN_USER_POOL_IDP_TYPES: ReadonlySet<string> = new Set([
+  "google",
+  "github",
+  "facebook",
+  "linkedin",
+  "yandex",
+  "onetimepin",
+]);
+
+/** Conditional-access posture of one Access application, derived once. */
+interface AppPosture {
+  /** The application's policies, in scan order. */
+  policies: CfAccessPolicy[];
+  /** Distinct normalized conditional-access factors across `allow` policies. */
+  factors: string[];
+  /** True when a policy admits everyone or bypasses authentication. */
+  wideOpen: boolean;
+}
+
+/** Derive the {@link AppPosture} of one Access application from its policies. */
+function computeAppPosture(
+  app: CfAccessApp,
+  policies: CfAccessPolicy[],
+): AppPosture {
+  const appPolicies = policies.filter((p) =>
+    p.accountId === app.accountId && p.appId === app.appId
+  );
+  const allowPolicies = appPolicies.filter((p) => p.decision === "allow");
+  const wideOpen = appPolicies.some((p) =>
+    (p.decision === "allow" && p.allowsEveryone) || p.decision === "bypass"
+  );
+  const factors = [...new Set(allowPolicies.flatMap((p) => p.factors))].sort();
+  return { policies: appPolicies, factors, wideOpen };
+}
+
+/** The {@link ConditionalAccess} an Access application's posture represents. */
+function appConditionalAccess(posture: AppPosture): ConditionalAccess {
+  return {
+    present: !posture.wideOpen && posture.factors.length > 0,
+    factors: posture.factors,
+  };
+}
+
+/**
+ * Evaluate a Cloudflare identity provider's configuration. Flags public,
+ * open-registration IdP types ({@link OPEN_USER_POOL_IDP_TYPES}) and IdPs that
+ * no Access application in the account references.
+ */
+function evaluateIdp(
+  idp: CfIdentityProvider,
+  accountApps: CfAccessApp[],
+): Finding[] {
+  const findings: Finding[] = [];
+  if (OPEN_USER_POOL_IDP_TYPES.has(idp.type)) {
+    findings.push(
+      makeFinding(
+        "CF_IDP_OPEN_USER_POOL",
+        `Identity provider "${idp.name}" is a \`${idp.type}\` login — any ` +
+          `account at that provider can authenticate; only Access policies ` +
+          `restrict who reaches an application.`,
+      ),
+    );
+  }
+  // An application with an empty `allowedIdps` accepts every configured IdP,
+  // so a provider is unreferenced only when every app names other providers.
+  const referenced = accountApps.some((app) =>
+    app.allowedIdps.length === 0 || app.allowedIdps.includes(idp.idpId)
+  );
+  if (accountApps.length > 0 && !referenced) {
+    findings.push(
+      makeFinding(
+        "CF_IDP_UNREFERENCED",
+        `Identity provider "${idp.name}" is configured but no Access ` +
+          `application in account ${idp.accountId} permits it.`,
+      ),
+    );
+  }
+  return findings;
+}
+
+/**
  * Derive the Cloudflare One portion of the trust graph: an account domain per
- * account, a federation edge per identity provider, a session edge per Access
- * application (carrying its policies' conditional-access posture), and a
- * non-ephemeral `cf-service-token` edge per service token.
+ * account; an IdP domain per identity provider, with an `oidc-federation` edge
+ * to the account that trusts it and one to each Access application that
+ * explicitly scopes `allowedIdps` to it; a session edge per Access application
+ * (carrying its policies' conditional-access posture); and a non-ephemeral
+ * `cf-service-token` edge per service token.
  */
 export function deriveCloudflareSlice(
   apps: CfAccessApp[],
@@ -558,6 +675,28 @@ export function deriveCloudflareSlice(
       discoveredAt: now,
     });
 
+  // Each Access application is its own trust-domain node, keyed by the stable
+  // `appId` so apps that share a display name never collapse onto one node.
+  const ensureApp = (app: CfAccessApp): string =>
+    ensureDomain(domains, {
+      id: cloudflareAppDomainId(app.accountId, app.appId),
+      platform: "cloudflare",
+      kind: "app",
+      displayName: `Access app ${app.name}`,
+      issuerUri: null,
+      discoveredAt: now,
+    });
+
+  // Posture is derived once per application and shared by the IdP→app and
+  // account→app edges so both report the same conditional-access state.
+  const postureByApp = new Map<string, AppPosture>();
+  for (const app of apps) {
+    postureByApp.set(
+      `${app.accountId}/${app.appId}`,
+      computeAppPosture(app, policies),
+    );
+  }
+
   for (const idp of idps) {
     const accountDomainId = ensureAccount(idp.accountId);
     const sourceDomainId = ensureDomain(domains, {
@@ -569,20 +708,26 @@ export function deriveCloudflareSlice(
       discoveredAt: now,
     });
     const sourceLabel = `${idp.type} IdP ${idp.name}`;
-    const targetLabel = `Cloudflare account ${idp.accountId}`;
+    const sourceIssuer = idp.issuerUri ?? idp.type;
+    const accountApps = apps.filter((a) => a.accountId === idp.accountId);
+
+    // IdP → account: the account-level trust, annotated with the findings
+    // from evaluating the provider's own configuration.
+    const accountLabel = `Cloudflare account ${idp.accountId}`;
     edges.push({
       id: trustEdgeId({
         sourceDomainId,
         sourceLabel,
-        targetLabel,
-        sourceIssuer: idp.issuerUri ?? idp.type,
+        targetDomainId: accountDomainId,
+        targetLabel: accountLabel,
+        sourceIssuer,
         credentialType: "oidc-federation",
       }),
       sourceDomainId,
       sourceLabel,
-      sourceIssuer: idp.issuerUri ?? idp.type,
+      sourceIssuer,
       targetDomainId: accountDomainId,
-      targetLabel,
+      targetLabel: accountLabel,
       audience: [],
       subjectPattern: null,
       claimConditions: null,
@@ -590,26 +735,52 @@ export function deriveCloudflareSlice(
       ephemeral: true,
       conditionalAccess: { present: false, factors: [] },
       permissions: [],
-      findings: [],
+      findings: evaluateIdp(idp, accountApps),
       discoveredAt: now,
     });
+
+    // IdP → app: one edge per application that explicitly names this provider
+    // in `allowedIdps`, carrying that application's conditional-access posture.
+    for (const app of accountApps) {
+      if (!app.allowedIdps.includes(idp.idpId)) continue;
+      const posture = postureByApp.get(`${app.accountId}/${app.appId}`)!;
+      const appDomainId = ensureApp(app);
+      const appLabel = `Access app ${app.name}`;
+      edges.push({
+        id: trustEdgeId({
+          sourceDomainId,
+          sourceLabel,
+          targetDomainId: appDomainId,
+          targetLabel: appLabel,
+          sourceIssuer,
+          credentialType: "oidc-federation",
+        }),
+        sourceDomainId,
+        sourceLabel,
+        sourceIssuer,
+        targetDomainId: appDomainId,
+        targetLabel: appLabel,
+        audience: app.domain ? [app.domain] : [],
+        subjectPattern: null,
+        claimConditions: posture.policies.map((p) => p.name).join("; ") || null,
+        credentialType: "oidc-federation",
+        ephemeral: true,
+        conditionalAccess: appConditionalAccess(posture),
+        permissions: [],
+        findings: [],
+        discoveredAt: now,
+      });
+    }
   }
 
   for (const app of apps) {
     const accountDomainId = ensureAccount(app.accountId);
-    const appPolicies = policies.filter((p) =>
-      p.accountId === app.accountId && p.appId === app.appId
-    );
-    const allowPolicies = appPolicies.filter((p) => p.decision === "allow");
-    const wideOpen = appPolicies.some((p) =>
-      (p.decision === "allow" && p.allowsEveryone) || p.decision === "bypass"
-    );
-    const factors = [...new Set(allowPolicies.flatMap((p) => p.factors))]
-      .sort();
-    const hasStrongFactor = factors.some((f) => STRONG_FACTORS.has(f));
+    const appDomainId = ensureApp(app);
+    const posture = postureByApp.get(`${app.accountId}/${app.appId}`)!;
+    const hasStrongFactor = posture.factors.some((f) => STRONG_FACTORS.has(f));
 
     const findings: Finding[] = [];
-    if (wideOpen) {
+    if (posture.wideOpen) {
       findings.push(
         makeFinding(
           "CF_ACCESS_POLICY_ALLOW_ALL",
@@ -617,7 +788,7 @@ export function deriveCloudflareSlice(
             `bypasses authentication.`,
         ),
       );
-    } else if (appPolicies.length > 0 && !hasStrongFactor) {
+    } else if (posture.policies.length > 0 && !hasStrongFactor) {
       findings.push(
         makeFinding(
           "CF_ACCESS_NO_POSTURE",
@@ -633,6 +804,7 @@ export function deriveCloudflareSlice(
       id: trustEdgeId({
         sourceDomainId: accountDomainId,
         sourceLabel,
+        targetDomainId: appDomainId,
         targetLabel,
         sourceIssuer: "cloudflare-access",
         credentialType: "oidc-federation",
@@ -640,17 +812,14 @@ export function deriveCloudflareSlice(
       sourceDomainId: accountDomainId,
       sourceLabel,
       sourceIssuer: "cloudflare-access",
-      targetDomainId: accountDomainId,
+      targetDomainId: appDomainId,
       targetLabel,
       audience: app.domain ? [app.domain] : [],
       subjectPattern: null,
-      claimConditions: appPolicies.map((p) => p.name).join("; ") || null,
+      claimConditions: posture.policies.map((p) => p.name).join("; ") || null,
       credentialType: "oidc-federation",
       ephemeral: true,
-      conditionalAccess: {
-        present: !wideOpen && factors.length > 0,
-        factors,
-      },
+      conditionalAccess: appConditionalAccess(posture),
       permissions: [],
       findings,
       discoveredAt: now,
@@ -667,6 +836,7 @@ export function deriveCloudflareSlice(
       id: trustEdgeId({
         sourceDomainId: EXTERNAL_UNKNOWN_DOMAIN_ID,
         sourceLabel,
+        targetDomainId: accountDomainId,
         targetLabel,
         sourceIssuer: STATIC_ISSUER,
         credentialType: "cf-service-token",
