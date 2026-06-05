@@ -1,6 +1,6 @@
 ---
 name: swamp-workflow
-description: Work with swamp workflows for AI-native automation — define jobs and steps in YAML, wire models together with dependencies, validate DAGs, and inspect run history. Use when searching for workflows, creating new workflows, validating workflow definitions, running workflows, or viewing run history. Triggers on "swamp workflow", "run workflow", "create workflow", "automate", "automation", "orchestrate", "run history", "execute workflow", "workflow logs", "workflow failure", "debug workflow".
+description: Work with swamp workflows for AI-native automation — define jobs and steps in YAML, wire models together with dependencies, validate DAGs, and inspect run history. Use when searching for workflows, creating new workflows, validating workflow definitions, running workflows, or viewing run history. Triggers on "swamp workflow", "swamp workflow create", "swamp workflow run", "swamp workflow validate", "workflow YAML", "workflow DAG", "wire models together", "model_method step", "workflows/*.yaml", "swamp run history", "swamp workflow logs", "debug swamp workflow". Use ONLY for swamp's declarative YAML workflow artifacts created via swamp workflow create — NOT for the Claude Code Workflow tool, multi-step agent task lists, worktrees, or cron/scheduled agent runs.
 ---
 
 # Swamp Workflow Skill
@@ -22,26 +22,40 @@ machine-readable output.
 Correct flow: `swamp workflow create <name> --json` → edit the YAML → validate →
 run.
 
+## Skill boundary
+
+This skill produces a durable swamp workflow YAML under `workflows/` via
+`swamp workflow create`. It is unrelated to the Claude Code Workflow tool /
+dynamic workflows, to agent task lists (`TaskCreate`), to worktrees
+(`EnterWorktree`), or to cron/remote-agent scheduling
+(`CronCreate`/`RemoteTrigger`). If the user wants any of those, do not use this
+skill.
+
 ## Quick Reference
 
-| Task               | Command                                                |
-| ------------------ | ------------------------------------------------------ |
-| Get schema         | `swamp workflow schema get --json`                     |
-| Search workflows   | `swamp workflow search [query] --json`                 |
-| Get a workflow     | `swamp workflow get <id_or_name> --json`               |
-| Create a workflow  | `swamp workflow create <name> --json`                  |
-| Edit a workflow    | `swamp workflow edit [id_or_name]`                     |
-| Delete a workflow  | `swamp workflow delete <id_or_name> --json`            |
-| Validate workflow  | `swamp workflow validate [id_or_name] --json`          |
-| Evaluate workflow  | `swamp workflow evaluate <id_or_name> --json`          |
-| Run a workflow     | `swamp workflow run <id_or_name>`                      |
-| Run with inputs    | `swamp workflow run <id_or_name> --input key=value`    |
-| View run history   | `swamp workflow history search --json`                 |
-| Get latest run     | `swamp workflow history get <workflow> --json`         |
-| View run logs      | `swamp workflow history logs <run_or_workflow> --json` |
-| List workflow data | `swamp data list --workflow <name> --json`             |
-| Query wf data      | `swamp data query 'tags.workflow == "<name>"'`         |
-| Get workflow data  | `swamp data get --workflow <name> <data_name> --json`  |
+| Task               | Command                                                       |
+| ------------------ | ------------------------------------------------------------- |
+| Get schema         | `swamp workflow schema get --json`                            |
+| Search workflows   | `swamp workflow search [query] --json`                        |
+| Get a workflow     | `swamp workflow get <id_or_name> --json`                      |
+| Create a workflow  | `swamp workflow create <name> --json`                         |
+| Edit a workflow    | `swamp workflow edit [id_or_name]`                            |
+| Delete a workflow  | `swamp workflow delete <id_or_name> --json`                   |
+| Validate workflow  | `swamp workflow validate [id_or_name] --json`                 |
+| Evaluate workflow  | `swamp workflow evaluate <id_or_name> --json`                 |
+| Run a workflow     | `swamp workflow run <id_or_name>`                             |
+| Run with inputs    | `swamp workflow run <id_or_name> --input key=value`           |
+| Run from stdin     | `echo '{"k":"v"}' \| swamp workflow run <id_or_name> --stdin` |
+| Approve step       | `swamp workflow approve <workflow> <step>`                    |
+| Reject step        | `swamp workflow reject <workflow> <step>`                     |
+| Resume workflow    | `swamp workflow resume <workflow> [--input k=v]`              |
+| List approvals     | `swamp workflow approvals`                                    |
+| View run history   | `swamp workflow history search --json`                        |
+| Get latest run     | `swamp workflow history get <workflow> --json`                |
+| View run logs      | `swamp workflow history logs <run_or_workflow> --json`        |
+| List workflow data | `swamp data list --workflow <name> --json`                    |
+| Query wf data      | `swamp data query 'tags.workflow == "<name>"'`                |
+| Get workflow data  | `swamp data get --workflow <name> <data_name> --json`         |
 
 ## Repository Structure
 
@@ -258,15 +272,23 @@ swamp workflow run my-workflow --input environment=production --input replicas=3
 swamp workflow run my-workflow --input 'tags:json=["prod","west"]'  # :json suffix for arrays/objects
 swamp workflow run my-workflow --input '{"environment": "production"}'  # legacy single-shot JSON
 swamp workflow run my-workflow --input-file inputs.yaml
+echo '{"environment": "prod"}' | swamp workflow run my-workflow --stdin
+printf '{"environment":"dev"}\n{"environment":"prod"}' | swamp workflow run my-workflow --stdin  # NDJSON: one run per line
 swamp workflow run my-workflow --last-evaluated  # Use pre-evaluated workflow
 ```
+
+Pass `--stdin` to read piped input. JSON objects, JSON arrays, NDJSON (one JSON
+per line), and YAML are supported. Multiple items (array or NDJSON) produce one
+workflow run per item. `--input` key=value overrides are deep-merged onto each
+stdin item.
 
 **Options:**
 
 | Flag                | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
 | `--input <value>`   | Input values (key=value repeatable, or JSON)                       |
-| `--input-file <f>`  | Input values from YAML file                                        |
+| `--input-file <f>`  | Input values from YAML file (cannot combine with `--stdin`)        |
+| `--stdin`           | Read inputs from stdin (piped data)                                |
 | `--last-evaluated`  | Use previously evaluated workflow (skip eval and input validation) |
 | `--driver <driver>` | Override execution driver for all steps (e.g. `raw`, `docker`)     |
 
@@ -485,22 +507,15 @@ steps:
 
 ## Step Task Types
 
-Steps support two task types:
+Steps support three task types:
 
-**`model_method`** has two mutually exclusive variants — `modelIdOrName`
-(existing definition) or `modelType` + `modelName` (direct type execution). See
+**`model_method`** — prefer `modelType` + `modelName` (direct type execution)
+for dynamic inputs. Use `modelIdOrName` only for persistent definitions with CEL
+expressions or shared config. See
 [references/direct-execution.md](references/direct-execution.md) for details.
 
 ```yaml
-# Existing definition
-task:
-  type: model_method
-  modelIdOrName: my-model
-  methodName: run
-  inputs:
-    key: ${{ inputs.value }}
-
-# Direct type execution (auto-creates definition)
+# Direct type execution (default — dynamic inputs, no YAML to manage)
 task:
   type: model_method
   modelType: "@test/greeter"
@@ -509,6 +524,14 @@ task:
   inputs:
     greeting: ${{ inputs.greeting }}
     name: ${{ inputs.who }}
+
+# Existing definition (only for persistent config with CEL expressions)
+task:
+  type: model_method
+  modelIdOrName: my-model
+  methodName: run
+  inputs:
+    key: ${{ inputs.value }}
 ```
 
 **`workflow`** - Invoke another workflow (waits for completion):
@@ -522,6 +545,33 @@ task:
 ```
 
 Nested workflows have a max depth of 10 and cycle detection is enforced.
+
+**`manual_approval`** - Suspend workflow and wait for operator approval:
+
+```yaml
+task:
+  type: manual_approval
+  prompt: "Verify SSH access before proceeding"
+  timeout: 3600 # Optional: seconds before approve is rejected
+```
+
+The workflow suspends to disk. Approve, reject, or resume from CLI:
+
+```
+swamp workflow approve <workflow-name> <step-name>
+swamp workflow reject  <workflow-name> <step-name> --reason "Not ready"
+swamp workflow resume  <workflow-name>
+swamp workflow resume  <workflow-name> --input authKey=tskey-abc123
+swamp workflow approvals  # list all pending approvals
+```
+
+Resume accepts `--input`/`--input-file`/`--stdin` (same parsing as
+`workflow run`). Resume inputs merge over the inputs the run had when it
+suspended, with a resume `--input` winning on a key collision. Evaluation stays
+strict, so a workflow must declare the inputs it references at run time: declare
+the input at run (e.g. a placeholder) and supply or override its value at
+resume. The run record records the resume input key names (not values) for
+audit.
 
 ## Working with Vaults
 

@@ -34,12 +34,18 @@ via `swamp-extension-publish`.
 
 ## Before Creating an Extension
 
-1. `swamp model type search <query>` / `swamp extension search <query>` — does a
-   built-in or community extension already cover it? Use it. Stop.
-2. Trusted collectives (`@swamp/*`, `@si/*`, membership collectives)
-   auto-resolve on first use — `swamp extension trust list` shows which.
-3. For local or private extensions, use `swamp extension source add <path>`.
-4. Only create a new extension if nothing fits.
+1. `swamp extension search <query>` — does a community extension already cover
+   it? Prefer `@swamp/*` official extensions first. Install with
+   `swamp extension pull <package>` and use it. Stop.
+2. `swamp model type search <query>` — check built-in/installed local types.
+3. Extend an existing type (including `@swamp` extensions) if it covers the
+   domain but lacks the method you need.
+4. For local or private extensions, use `swamp extension source add <path>`.
+5. Only create a new extension if nothing fits.
+
+Trusted collectives auto-resolve on first use. Only `@swamp/*` is trusted by
+default; trust others explicitly with `swamp extension trust add <collective>`
+(`swamp extension trust list` shows which).
 
 **Never** use `command/shell` to wrap service integrations — build a dedicated
 model.
@@ -72,6 +78,11 @@ the start — placeholder prefixes like `@local/` are rejected during push.
 ### Model
 
 ```typescript
+/**
+ * Processes input messages and stores the result.
+ *
+ * @module
+ */
 // extensions/models/my_model.ts
 import { z } from "npm:zod@4";
 
@@ -85,6 +96,7 @@ const OutputSchema = z.object({
   timestamp: z.iso.datetime(),
 });
 
+/** Model definition for processing input messages. */
 export const model = {
   type: "@myorg/my-model",
   version: "2026.02.09.1",
@@ -117,6 +129,11 @@ export const model = {
 ### Vault
 
 ```typescript
+/**
+ * Custom vault provider for retrieving secrets from a backend.
+ *
+ * @module
+ */
 // extensions/vaults/my-vault/mod.ts
 import { z } from "npm:zod@4";
 
@@ -125,6 +142,7 @@ const ConfigSchema = z.object({
   token: z.string(),
 });
 
+/** Vault provider definition. */
 export const vault = {
   type: "@myorg/my-vault",
   name: "My Custom Vault",
@@ -149,6 +167,11 @@ export const vault = {
 ### Driver
 
 ```typescript
+/**
+ * Custom execution driver for running methods on a remote host.
+ *
+ * @module
+ */
 // extensions/drivers/my-driver/mod.ts
 import { z } from "npm:zod@4";
 
@@ -157,6 +180,7 @@ const ConfigSchema = z.object({
   port: z.number().default(22),
 });
 
+/** Execution driver definition. */
 export const driver = {
   type: "@myorg/my-driver",
   name: "My Custom Driver",
@@ -192,6 +216,11 @@ export const driver = {
 ### Datastore
 
 ```typescript
+/**
+ * Custom datastore provider for storing runtime data in a backend.
+ *
+ * @module
+ */
 // extensions/datastores/my-store/mod.ts
 import { z } from "npm:zod@4";
 
@@ -200,6 +229,7 @@ const ConfigSchema = z.object({
   bucket: z.string(),
 });
 
+/** Datastore provider definition. */
 export const datastore = {
   type: "@myorg/my-store",
   name: "My Custom Store",
@@ -249,15 +279,31 @@ All extension types follow the same lifecycle:
 
 ### Adversarial Review Gate
 
-> **STOP — do not skip.**
+> **`swamp extension push` checks for this.**
+>
+> `swamp extension push` warns and prompts for confirmation unless a complete,
+> content-hash-bound review report exists for the exact code being pushed. The
+> prompt is the gate — do not answer it blindly or pass `--yes` to dodge the
+> review. Editing any source (or bumping the version) changes the content hash
+> and asks for a fresh report.
 >
 > After authoring or **significantly modifying** extension code, and BEFORE
 > running smoke tests or unit tests:
 >
-> 1. Read [references/adversarial-review.md](references/adversarial-review.md)
->    and self-review against every applicable dimension.
-> 2. Produce the structured findings report described in that file.
-> 3. Present the report to the user and wait for acknowledgement.
+> 1. Read [references/adversarial-review.md](references/adversarial-review.md).
+>    Execute the **Mandatory Mechanical Verification** checks first — these
+>    catch schema/write mismatches that dimensional review misses. Fix any
+>    failures before proceeding.
+> 2. Review against every applicable dimension.
+> 3. Run `swamp extension push manifest.yaml --dry-run`. When no report exists,
+>    it prints the exact report path (a content-hash-bound file under the temp
+>    directory) and a JSON skeleton listing every applicable dimension.
+> 4. Write that skeleton to the printed path, setting each dimension's `verdict`
+>    to `pass`, `issue`, or `na` (with a `note` for anything not `pass`). Set
+>    `reviewedAt` to the current ISO-8601 timestamp.
+> 5. Present the findings to the user, then re-run the push. A missing, stale,
+>    or incomplete report (or any `issue` verdict) surfaces as a warning to
+>    confirm.
 
 ## Key Rules (All Types)
 
@@ -287,14 +333,17 @@ If an extension doesn't appear after creation, delete stale bundles
 
 ## Quality Scorecard
 
-Swamp Club scores published extensions against an 11-factor rubric. Maximum
-third-party score: **12/13 = 92% (Grade A)**.
+Swamp Club scores published extensions against a 12-factor rubric. Maximum
+third-party score: **14/15 = 93% (Grade A)**.
 
 Key factors: README in `additionalFiles:`, LICENSE file, JSDoc coverage ≥80%,
 explicit return types, manifest `description:`, `repository:` URL on allowlisted
-host.
+host, dependency trust (no deprecated or vulnerable npm deps).
 
 Run `swamp extension quality manifest.yaml --json` for a local self-check.
+Dependency trust is evaluated automatically — npm dependencies are audited
+against OSV.dev advisories and trust signals (downloads, license, recency,
+maintainer count). HIGH/CRITICAL vulnerabilities block push.
 
 See [references/quality/rubric.md](references/quality/rubric.md) for the full
 rubric and [references/quality/templates.md](references/quality/templates.md)

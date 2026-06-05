@@ -1,16 +1,19 @@
 ---
 name: swamp-extension-publish
 description: >
-  Publish swamp extensions to the registry with an enforced state-machine
-  checklist that verifies repo initialization, authentication, manifest
-  validation, collective ownership, version bumping, formatting, and dry-run
-  before allowing a push. Do NOT use for creating extensions (that is
-  swamp-extension), improving quality scores (that is swamp-extension), or
-  smoke testing extensions before push (that is swamp-extension). Use when
-  publishing, pushing, or releasing extensions. Triggers on "publish
-  extension", "push extension", "extension push", "publish to registry",
-  "swamp extension push", "release extension", "prepare for publishing",
-  "extension-publish".
+  Publish swamp extensions to the registry and manage post-publication
+  lifecycle (deprecation). Enforces a state-machine checklist that verifies
+  repo initialization, authentication, manifest validation, collective
+  ownership, version bumping, formatting, and dry-run before allowing a push.
+  Also covers deprecating and undeprecating published extensions. Do NOT use
+  for creating extensions (that is swamp-extension), improving quality scores
+  (that is swamp-extension), or smoke testing extensions before push (that is
+  swamp-extension). Use when publishing, pushing, releasing, deprecating, or
+  undeprecating extensions. Triggers on "publish extension", "push extension",
+  "extension push", "publish to registry", "swamp extension push", "release
+  extension", "prepare for publishing", "extension-publish", "deprecate
+  extension", "undeprecate extension", "mark extension deprecated", "remove
+  deprecation", "extension deprecated", "superseded by".
 ---
 
 # Swamp Extension Publish
@@ -25,7 +28,7 @@ passed.
 
 ```
 start → repo_verified → auth_verified → manifest_validated
-      → versioned → formatted → dry_run_passed → pushed
+      → versioned → formatted → quality_checked → dry_run_passed → pushed
 ```
 
 ## State 1: repo_verified
@@ -138,10 +141,26 @@ swamp extension fmt manifest.yaml --check --json
 [references/publishing.md](references/publishing.md#extension-formatting) for
 details.
 
-**Optional:** Run `swamp extension quality manifest.yaml --json` between States
-6 and 7 for a rubric score. See
-[references/publishing.md](references/publishing.md#quality-self-check) for
-details.
+## State 6b: quality_checked
+
+Show the extension's quality score before proceeding. This step is
+**non-blocking** — it does not gate the next state. The score is informational
+so the author sees where they stand before publishing.
+
+**Gate:** State 6 passed (formatting clean).
+
+**Action:**
+
+```bash
+swamp extension quality manifest.yaml --json
+```
+
+**Present:** Show the score and grade to the user (e.g. "Quality: 10/15 (67%),
+Grade B"). If any factors are unearned, list them so the author can decide
+whether to address them. Do not require or suggest they must fix anything —
+these are the author's choices.
+
+**Advance:** Always proceed to State 7 regardless of the score.
 
 ## State 7: dry_run_passed
 
@@ -157,7 +176,10 @@ swamp extension push manifest.yaml --dry-run --json
 
 **Verify:** Exit code 0. Confirm any warnings with the user.
 
-**On Failure:** See
+**On Failure:** If the dry-run reports a missing or incomplete adversarial
+review report, the review gate is unsatisfied. Complete the **Adversarial Review
+Gate** in the `swamp-extension` skill (write the content-hash-bound review
+report at the path the dry-run prints), then re-run. For other failures see
 [references/publishing.md](references/publishing.md#safety-rules).
 
 ## State 8: pushed
@@ -183,6 +205,44 @@ swamp extension push manifest.yaml --yes --json
 - Version already exists → bump the MICRO component and retry
 - Network error → check connectivity and retry
 - Auth error → re-run `swamp auth login` (go back to State 2)
+
+## Post-Publication: Deprecation
+
+Deprecate or undeprecate a published extension. Deprecated extensions remain
+pullable — this is a soft lifecycle signal, not a deletion.
+
+**Prerequisites:** Authenticated (`swamp auth whoami`) and authorized for the
+extension's collective.
+
+### Deprecate
+
+```bash
+swamp extension deprecate @collective/name --reason "No longer maintained" --json
+
+# Point users to a replacement
+swamp extension deprecate @collective/name \
+  --reason "Merged into collective extension" \
+  --superseded-by @other/replacement --json
+```
+
+| Option            | Required | Description                     |
+| ----------------- | -------- | ------------------------------- |
+| `--reason`        | Yes      | Why the extension is deprecated |
+| `--superseded-by` | No       | Replacement extension name      |
+| `-y, --yes`       | No       | Skip confirmation prompt        |
+
+### Undeprecate
+
+```bash
+swamp extension undeprecate @collective/name --json
+```
+
+Removes deprecation status. Accepts `-y, --yes` to skip confirmation.
+
+### Where deprecation surfaces
+
+`search` shows `[deprecated]`, `info` shows reason/successor/timestamp, `pull`
+prints a warning, `outdated` and `list --check-updates` flag the extension.
 
 ## References
 
