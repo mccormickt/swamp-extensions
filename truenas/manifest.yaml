@@ -1,0 +1,53 @@
+manifestVersion: 1
+name: '@mccormick/truenas'
+version: 2026.06.07.2
+description: >
+  Hypervisor-layer VM inventory for TrueNAS SCALE, via the JSON-RPC WebSocket
+  API.
+
+  TrueNAS SCALE 24.10+ runs guest VMs as Incus instances; earlier releases use
+  libvirt. The `@mccormick/truenas/inventory` model asks TrueNAS for that guest
+  state and turns it into a typed swamp inventory: one `vm` resource per guest
+  (normalized state, vcpus, memory, disks, NICs, and MAC addresses) and a single
+  `summary` roll-up (host, TrueNAS version, and running/stopped/other counts).
+
+  The `discover` method fans out across every guest in one `virt.instance.query`
+  (or legacy `vm.query`) call — no per-VM loop. Guests share the common
+  `name`/`state`/`vcpus`/`memoryMib`/`macs` field contract with the Proxmox and
+  Omni inventory providers, so a workflow report can join all three hypervisors
+  into one fleet view.
+
+  Read-only: the model issues only `query` and `system.info` calls and never
+  mutates TrueNAS state. Transport is the JSON-RPC WebSocket API authenticated
+  with an API key; the key is supplied through a vault, marked sensitive, and
+  redacted from logs and error text.
+
+  The companion `@mccormick/truenas/vm` model provisions guests from a ZFS zvol
+  (`create_zvol`, `create_vm`, `attach_disk`, `attach_nic`, `start`/`stop`/
+  `status`/`delete`) over the same JSON-RPC transport — the TrueNAS half of the
+  `migrate-vm` workflow. Every provisioning method is idempotent (queries before
+  it writes), stamps a swamp marker into the VM description, and gates deletes on
+  it. Read-only inventory and read-write provisioning are deliberately split
+  across two models so the inventory safety story stays intact.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - inventory.ts
+  - vm.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - truenas
+  - incus
+  - libvirt
+  - virtualization
+  - inventory
+  - homelab
+dependencies: []

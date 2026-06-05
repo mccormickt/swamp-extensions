@@ -1,0 +1,38 @@
+manifestVersion: 1
+name: '@mccormick/fleet'
+version: 2026.06.07.1
+description: >
+  Cross-hypervisor fleet VM inventory report for swamp.
+
+  A workflow-scoped report that joins the per-hypervisor inventory steps of a
+  fleet workflow into one view: it reads each step's guest resources by spec
+  name — `node` (Omni/Talos via @mccormick/omni), `guest` (Proxmox QEMU via
+  @stateless/proxmox), `vm_spec` (a richer Proxmox row, with vcpus/memory, from
+  @mccormick/proxmox-migrate), and `vm` (TrueNAS via @mccormick/truenas) —
+  normalizes them onto flat rows sharing the name/state/vcpus/memoryMib
+  contract, dedupes rows describing the same guest (keeping the richest), and
+  renders a markdown table plus JSON totals per hypervisor.
+
+  The report keys on resource spec names, not model instance names, so any
+  workflow wiring the three providers can require it. Steps that failed, or that
+  produced only summary/cluster/exec resources, contribute nothing.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models: []
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports:
+  - fleet_inventory.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - fleet
+  - inventory
+  - virtualization
+  - report
+  - homelab
+dependencies: []

@@ -1,0 +1,41 @@
+manifestVersion: 1
+name: '@mccormick/unifi'
+version: 2026.06.04.2
+description: >
+  Custom/static DNS records on a local UniFi Network controller.
+
+  The `@mccormick/unifi/dns` model reads, upserts, and deletes the custom DNS
+  records a UniFi OS console serves on its LAN. `list_records` writes one
+  `dns_record` resource per entry; `upsert_record` creates or updates a single
+  record in place (find by key+type, PUT when it exists, else POST);
+  `delete_record` removes one (idempotent). The mutating methods are gated by a
+  `live` pre-flight check that confirms the controller is reachable before any
+  write. This turns a cutover DNS flip — repointing a hostname at a new host —
+  into a composable, reusable model method.
+
+  Targets the local controller's internal v2 API
+  (`/proxy/network/v2/api/site/<site>/static-dns`) with an `X-API-KEY` header.
+  The cloud Site Manager API (api.ui.com) cannot edit DNS — use a key issued on
+  the local UniFi OS console (Settings → Control Plane → Integrations). The api
+  key is supplied through a vault, marked sensitive, and redacted from logs and
+  error text.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - dns.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports: []
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - unifi
+  - ubiquiti
+  - dns
+  - networking
+  - homelab
+dependencies: []

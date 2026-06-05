@@ -1,0 +1,424 @@
+id: c2fc7fd4-ca18-4c07-b20b-80ab56124402
+name: migrate-vm
+description: >
+  Lift-and-shift a Proxmox QEMU VM to a TrueNAS libvirt VM, etcd- and
+  MAC-preserving (Proxmox → TrueNAS direction).
+
+  inspect source → create target zvol → agent-first in-guest network prep →
+  manual-approval gate → graceful ACPI shutdown → host-to-host disk stream →
+  create+attach+start target → offline netplan fix (agent-absent fallback) →
+  verify reachability → optional Omni node-reconnect check → optional DNS flip.
+  The source VM is left STOPPED for rollback; a cleanup job removes the
+  half-built target only on failure.
+
+  Required model instances (create + configure their globalArgs first):
+    - proxmox-migrate (@mccormick/proxmox-migrate): PVE transport (api token or
+      ssh) for the source node.
+    - truenas-vm (@mccormick/truenas/vm): TrueNAS endpoint + apiKey (read-write).
+    - migrate-disk (@mccormick/migrate/disk): SSH defaults / migrationKeyPath.
+    - omni (@mccormick/omni/inventory): optional, for the node-reconnect check.
+    - unifi-dns (@mccormick/unifi/dns): optional, for a non-same-IP DNS flip.
+
+  tn2pve (the reverse) is intentionally out of scope for this file — it needs the
+  source/target roles swapped (TrueNAS status read, Proxmox empty-volume + stream
+  in, local-mode offline edit); add it as a sibling workflow when needed.
+version: 1
+tags: {}
+reports:
+  require:
+    - '@mccormick/migrate/summary'
+inputs:
+  properties:
+    direction:
+      type: string
+      enum: ["pve2tn"]
+      default: "pve2tn"
+      description: Migration direction (only pve2tn is implemented here).
+    srcHost:
+      type: string
+      description: Source hypervisor SSH host (the Proxmox node, has the disk).
+    dstHost:
+      type: string
+      description: Target hypervisor SSH host (the TrueNAS host).
+    vmid:
+      type: integer
+      description: Proxmox VMID of the source guest.
+    targetName:
+      type: string
+      description: New TrueNAS VM name (alphanumeric).
+    targetPool:
+      type: string
+      default: "Main"
+      description: TrueNAS ZFS pool for the target zvol.
+    targetZvolName:
+      type: string
+      description: New zvol name within the pool.
+    bridge:
+      type: string
+      default: "br0"
+      description: TrueNAS host bridge for the target NIC.
+    firmwareOverride:
+      type: string
+      enum: ["", "UEFI", "UEFI_CSM"]
+      default: ""
+      description: Force the target bootloader; empty maps from source firmware.
+    targetIp:
+      type: string
+      default: ""
+      description: >
+        Known cutover IP to verify; empty falls back to the agent-reported IP
+        (which is null for agent-absent guests).
+    useDhcp:
+      type: boolean
+      default: true
+      description: In-guest network prep uses DHCP (else static).
+    staticCidr:
+      type: string
+      default: ""
+      description: Static address (CIDR) when useDhcp is false.
+    gateway:
+      type: string
+      default: ""
+      description: Default gateway when useDhcp is false.
+    transferMode:
+      type: string
+      enum: ["auto", "direct", "relay"]
+      default: "auto"
+      description: Disk transfer topology.
+    offlineVgName:
+      type: string
+      default: "ubuntu-vg"
+      description: LVM volume group for the agent-absent offline netplan edit.
+    offlineLvName:
+      type: string
+      default: "ubuntu-lv"
+      description: LVM logical volume (root) for the offline edit.
+    dnsFlip:
+      type: boolean
+      default: false
+      description: Upsert a DNS record after cutover (non-same-IP case).
+    dnsKey:
+      type: string
+      default: ""
+      description: DNS record name to flip (when dnsFlip).
+    dnsValue:
+      type: string
+      default: ""
+      description: DNS record value to set (when dnsFlip).
+  required: ["srcHost", "dstHost", "vmid", "targetName", "targetZvolName"]
+jobs:
+  - name: migrate
+    description: Inspect → provision → cutover → verify (serialized).
+    concurrency: 1
+    weight: 0
+    dependsOn: []
+    steps:
+      # 1. Inspect the source: vcpus, memory, firmware, disks (devPath), nics (MAC).
+      - name: inspect
+        description: Read the source VM config into a vm_spec.
+        weight: 0
+        allowFailure: false
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: proxmox-migrate
+          methodName: inspect
+          inputs:
+            vmid: ${{ inputs.vmid }}
+
+      # 1b. Agent presence — drives the agent-vs-offline net-prep path.
+      - name: agent-check
+        description: Probe the qemu guest agent on the source.
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: inspect
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: proxmox-migrate
+          methodName: agent_present
+          inputs:
+            vmid: ${{ inputs.vmid }}
+
+      # 2. Create the target zvol, sized (rounded up) from the source disk.
+      - name: create-zvol
+        description: Create the sparse target zvol on TrueNAS.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: inspect
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: create_zvol
+          inputs:
+            pool: ${{ inputs.targetPool }}
+            name: ${{ inputs.targetZvolName }}
+            sizeGib: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.disks[0].sizeGib }}
+            sparse: true
+
+      # 3. Agent-first in-guest network prep (match-by-MAC), BEFORE shutdown.
+      - name: prep-net-agent
+        description: Rewrite netplan in-guest via the agent (fails if no agent).
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: agent-check
+            condition:
+              type: completed
+        task:
+          type: model_method
+          modelIdOrName: proxmox-migrate
+          methodName: prepare_guest_network
+          inputs:
+            vmid: ${{ inputs.vmid }}
+            targetMac: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.nics[0].mac }}
+            useDhcp: ${{ inputs.useDhcp }}
+            staticCidr: ${{ inputs.staticCidr }}
+            gateway: ${{ inputs.gateway }}
+
+      # 4. Manual approval — destructive shutdown + stream ahead.
+      - name: approve-shutdown
+        description: Approve to shut down the source and stream its disk.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: create-zvol
+            condition:
+              type: succeeded
+          - step: prep-net-agent
+            condition:
+              type: completed
+        task:
+          type: manual_approval
+          prompt: >
+            Source inspected, target zvol ready, in-guest net prep attempted.
+            Approve to GRACEFULLY SHUT DOWN the source VM and stream its disk to
+            the target. The source is left stopped for rollback.
+          timeout: 3600
+
+      # 5. Graceful ACPI shutdown of the source.
+      - name: shutdown-src
+        description: Gracefully shut down the source VM.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: approve-shutdown
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: proxmox-migrate
+          methodName: shutdown
+          inputs:
+            vmid: ${{ inputs.vmid }}
+            timeoutSec: 180
+            forceAfter: false
+
+      # 6. Stream the disk host-to-host (direct or relay, auto-probed).
+      - name: stream-disk
+        description: Stream the source disk to the target zvol.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: shutdown-src
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: migrate-disk
+          methodName: stream
+          inputs:
+            srcHost: ${{ inputs.srcHost }}
+            dstHost: ${{ inputs.dstHost }}
+            srcDevPath: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.disks[0].devPath }}
+            dstDevPath: ${{ data.latest("truenas-vm", "zvol").attributes.devPath }}
+            expectedBytes: ${{ data.latest("truenas-vm", "zvol").attributes.sizeBytes }}
+            mode: ${{ inputs.transferMode }}
+            sparse: true
+
+      # 7. Create the target VM (firmware mapped: ovmf→UEFI, else UEFI_CSM).
+      - name: create-vm
+        description: Create the target libvirt VM.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: stream-disk
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: create_vm
+          inputs:
+            name: ${{ inputs.targetName }}
+            vcpus: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.vcpus }}
+            memoryMib: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.memoryMib }}
+            bootloader: '${{ inputs.firmwareOverride != "" ? inputs.firmwareOverride : (data.latest("proxmox-migrate", "vm_spec").attributes.firmware == "ovmf" ? "UEFI" : "UEFI_CSM") }}'
+
+      # 8. Attach the streamed disk.
+      - name: attach-disk
+        description: Attach the streamed zvol to the target VM.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: create-vm
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: attach_disk
+          inputs:
+            vmId: ${{ data.latest("truenas-vm", "vm_instance").attributes.id }}
+            zvolPath: ${{ data.latest("truenas-vm", "zvol").attributes.devPath }}
+            bus: VIRTIO
+
+      # 9. Attach a NIC carrying the SOURCE MAC → same-IP cutover.
+      - name: attach-nic
+        description: Attach a NIC with the source MAC (same-IP cutover).
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: create-vm
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: attach_nic
+          inputs:
+            vmId: ${{ data.latest("truenas-vm", "vm_instance").attributes.id }}
+            mac: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.nics[0].mac }}
+            bridge: ${{ inputs.bridge }}
+
+      # 10. Offline netplan fix (agent-absent fallback). allowFailure: harmlessly
+      #     fails when the agent path already applied, or when the qemu-nbd
+      #     server precondition on the TrueNAS host is not in place.
+      - name: prep-net-offline
+        description: Offline netplan edit on the streamed disk (agent-absent fallback).
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: attach-disk
+            condition:
+              type: succeeded
+          - step: prep-net-agent
+            condition:
+              type: completed
+        task:
+          type: model_method
+          modelIdOrName: migrate-disk
+          methodName: edit_guest_disk
+          inputs:
+            toolHost: ${{ inputs.srcHost }}
+            targetMode: nbd
+            nbdHost: ${{ inputs.dstHost }}
+            vgName: ${{ inputs.offlineVgName }}
+            lvName: ${{ inputs.offlineLvName }}
+            targetMac: ${{ data.latest("proxmox-migrate", "vm_spec").attributes.nics[0].mac }}
+            useDhcp: ${{ inputs.useDhcp }}
+            staticCidr: ${{ inputs.staticCidr }}
+            gateway: ${{ inputs.gateway }}
+
+      # 11. Start the target (only after attach + the offline edit settle).
+      - name: start-target
+        description: Start the target VM.
+        weight: 0
+        allowFailure: false
+        dependsOn:
+          - step: attach-disk
+            condition:
+              type: succeeded
+          - step: attach-nic
+            condition:
+              type: succeeded
+          - step: prep-net-offline
+            condition:
+              type: completed
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: start
+          inputs:
+            vmId: ${{ data.latest("truenas-vm", "vm_instance").attributes.id }}
+
+      # 12. Verify reachability of the cutover IP.
+      - name: verify-reach
+        description: Poll the cutover IP for reachability.
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: start-target
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: migrate-disk
+          methodName: verify
+          inputs:
+            ip: '${{ inputs.targetIp != "" ? inputs.targetIp : data.latest("proxmox-migrate", "vm_spec").attributes.primaryIp }}'
+            mode: tcp
+            timeoutSec: 300
+
+      # 13. Optional: re-run Omni discovery so the summary can assert reconnect.
+      - name: verify-omni
+        description: Re-discover Omni nodes (Talos node-reconnect proof).
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: verify-reach
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: omni
+          methodName: discover
+
+      # 14. Optional: DNS flip for a non-same-IP cutover.
+      - name: dns-flip
+        description: Upsert a DNS record (non-same-IP cutover).
+        weight: 0
+        allowFailure: true
+        dependsOn:
+          - step: verify-reach
+            condition:
+              type: succeeded
+        task:
+          type: model_method
+          modelIdOrName: unifi-dns
+          methodName: upsert_record
+          inputs:
+            key: ${{ inputs.dnsKey }}
+            recordType: A
+            value: ${{ inputs.dnsValue }}
+            enabled: true
+
+  # Cleanup the half-built target only when the migrate job failed. The source
+  # is never touched here — rollback is restarting the source on Proxmox.
+  - name: cleanup-on-failure
+    description: Remove the half-built target VM + zvol on failure.
+    weight: 0
+    dependsOn:
+      - job: migrate
+        condition:
+          type: failed
+    steps:
+      - name: delete-target-vm
+        description: Delete the target VM and its zvol.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: truenas-vm
+          methodName: delete
+          inputs:
+            name: ${{ inputs.targetName }}
+            deleteZvol: true
+            zvolPath: ${{ data.latest("truenas-vm", "zvol").attributes.devPath }}
+            force: true

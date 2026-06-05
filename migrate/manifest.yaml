@@ -1,0 +1,46 @@
+manifestVersion: 1
+name: '@mccormick/migrate'
+version: 2026.06.07.2
+description: >
+  Host-to-host VM disk migration primitives for swamp.
+
+  The `@mccormick/migrate/disk` model is the hypervisor-neutral middle of a VM
+  lift-and-shift. `stream` copies a powered-off source block device to a
+  destination block device over an encrypted, compressed pipe
+  (`dd | zstd | ssh "zstd -dc | dd conv=sparse"`), either direct (source→dest)
+  or relayed through the swamp host, with `auto` probing which is reachable and
+  verifying the written byte count. `edit_guest_disk` is the agent-absent
+  network fallback: it mounts the guest's LVM root over qemu-nbd (or locally) on
+  a tool host, rewrites netplan to match by the target MAC, disables cloud-init
+  networking, and tears it all down in a trap. `verify` polls a cutover IP for
+  TCP/ICMP reachability.
+
+  Paired with `@mccormick/truenas/vm` (provisioning) and a Proxmox inspect step,
+  these primitives compose into the `migrate-vm` workflow. SSH is spawned
+  directly (never `sh -c` locally) and every interpolated path is POSIX-quoted.
+
+  The workflow-scoped `@mccormick/migrate/summary` report joins a run's
+  resources (the Proxmox spec, TrueNAS zvol/VM/device, transfer, network-prep,
+  and verify) into a markdown summary: source→target, firmware mapping, bytes
+  verified, MAC preserved, reachability, and a rollback hint.
+repository: 'https://github.com/mccormickt/swamp-extensions'
+paths:
+  base: manifest
+models:
+  - disk.ts
+workflows: []
+vaults: []
+drivers: []
+datastores: []
+reports:
+  - summary.ts
+additionalFiles:
+  - README.md
+  - LICENSE.md
+labels:
+  - migration
+  - virtualization
+  - disk
+  - ssh
+  - homelab
+dependencies: []

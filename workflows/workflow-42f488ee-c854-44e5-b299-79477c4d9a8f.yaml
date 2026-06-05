@@ -1,0 +1,51 @@
+id: 42f488ee-c854-44e5-b299-79477c4d9a8f
+name: inventory-fleet
+description: >
+  Snapshot every VM across the hypervisor and Talos layers in one run: Omni
+  (Talos nodes), Proxmox QEMU guests, and TrueNAS Incus guests. The three
+  discoveries run in parallel and each is allowFailure, so one offline backend
+  never aborts the snapshot — the report renders from whatever succeeded. The
+  @mccormick/fleet/inventory report joins the steps into one cross-hypervisor
+  table after the run completes.
+
+  Each provider's connection (Omni endpoint, Proxmox node + API token, TrueNAS
+  endpoint + API key, backend) lives on its model instance's globalArgs, so the
+  workflow itself takes no inputs.
+version: 1
+tags: {}
+reports:
+  require:
+    - '@mccormick/fleet/inventory'
+jobs:
+  - name: inventory
+    description: Discover guests from each hypervisor and layer in parallel.
+    weight: 0
+    dependsOn: []
+    steps:
+      - name: omni
+        description: Discover Talos nodes via Omni.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: omni
+          methodName: discover
+      - name: proxmox
+        description: Sync every QEMU guest on the Proxmox node (no ref = all).
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: proxmox
+          methodName: sync
+      - name: truenas
+        description: Discover every Incus guest on TrueNAS.
+        weight: 0
+        allowFailure: true
+        dependsOn: []
+        task:
+          type: model_method
+          modelIdOrName: truenas
+          methodName: discover
