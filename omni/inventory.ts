@@ -16,7 +16,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   ClusterSchema,
   NodeSchema,
@@ -44,13 +43,41 @@ const GlobalArgs = z.object({
   ),
 });
 
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+    warn(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
+
 /**
  * `@mccormick/omni/inventory` — discovers every Talos machine and cluster an
  * Omni instance manages and writes them as typed swamp resources. Read-only.
  */
 export const model = {
   type: "@mccormick/omni/inventory",
-  version: "2026.05.21.1",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     node: {
@@ -79,7 +106,10 @@ export const model = {
         "one node resource per machine, one cluster resource per cluster, " +
         "and a summary roll-up.",
       arguments: z.object({}),
-      execute: async (_args, context) => {
+      execute: async (
+        _rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const g = context.globalArgs;
         const endpoint = assertHttpsUrl(g.endpoint, "endpoint");
         if (!g.serviceAccountKey) {
@@ -157,4 +187,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

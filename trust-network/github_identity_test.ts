@@ -189,7 +189,7 @@ Deno.test("scan discovers OIDC config and classified secrets", async () => {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: GLOBAL_ARGS,
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const written = getWrittenResources();
 
     const oidc = written.filter((r) => r.specName === "oidc_subject");
@@ -230,7 +230,7 @@ Deno.test("scan records a note and continues when a sub-fetch fails", async () =
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: GLOBAL_ARGS,
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const written = getWrittenResources();
     const summary = written.find((r) => r.specName === "identity_summary")!.data;
 

@@ -21,7 +21,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import Cloudflare from "npm:cloudflare@6.2.0";
 import {
   CfAccessAppSchema,
@@ -44,13 +43,39 @@ const GlobalArgs = z.object({
   accountIds: z.array(z.string()).default([]).describe(
     "Cloudflare account IDs to scan",
   ),
-  cloudflareToken: z.string().describe(
+  cloudflareToken: z.string().meta({ sensitive: true }).describe(
     "Cloudflare API token; supply via " +
       '${{ vault.get("cloudflare", "CLOUDFLARE_TOKEN") }}',
-  ).meta({ sensitive: true }),
+  ),
   apiBaseUrl: z.string().default("https://api.cloudflare.com/client/v4")
     .describe("Cloudflare API v4 base URL"),
 });
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency. The testing package is
+// still used in `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 /** The `fetch` implementation type the Cloudflare SDK client accepts. */
 type CloudflareFetch = NonNullable<
@@ -122,7 +147,7 @@ interface RawCertificate {
  */
 export const model = {
   type: "@mccormick/cloudflare/zerotrust",
-  version: "2026.05.21.1",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     access_app: {
@@ -168,7 +193,10 @@ export const model = {
         "Fan-out scan of Cloudflare One Access applications, policies, " +
         "identity providers, service tokens, and mTLS certificates.",
       arguments: z.object({}),
-      execute: async (_args, context) => {
+      execute: async (
+        _rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const g = context.globalArgs;
         const base = assertHttpsUrl(g.apiBaseUrl, "apiBaseUrl");
         if (g.accountIds.length > 0 && !g.cloudflareToken) {
@@ -359,4 +387,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

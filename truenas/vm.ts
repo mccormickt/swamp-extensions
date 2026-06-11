@@ -21,7 +21,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   openTruenasSession,
   type TruenasConnectOptions,
@@ -177,9 +176,33 @@ export function __setTruenasSessionFactory(
 
 // --- Helpers ---------------------------------------------------------------
 
-type MethodContext = Parameters<
-  ModelDefinition<typeof GlobalArgs>["methods"][string]["execute"]
->[1];
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+    warn(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 function connectOpts(g: z.infer<typeof GlobalArgs>): TruenasConnectOptions {
   if (!g.apiKey) throw new Error("apiKey is required to provision TrueNAS");
@@ -242,7 +265,7 @@ function toVmInstance(
 /** TrueNAS SCALE VM provisioning model (libvirt backend). */
 export const model = {
   type: "@mccormick/truenas/vm",
-  version: "2026.06.07.2",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     zvol: {
@@ -280,7 +303,7 @@ export const model = {
         "delete",
       ],
       execute: async (
-        context,
+        context: MethodContext,
       ): Promise<{ pass: boolean; errors?: string[] }> => {
         try {
           const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -305,7 +328,10 @@ export const model = {
         "Create a sparse/thick ZFS volume to back a guest disk (idempotent; " +
         "refuses to shrink an existing larger volume).",
       arguments: CreateZvolArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = CreateZvolArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const fullName = zvolFullName(a.pool, a.name);
@@ -375,7 +401,10 @@ export const model = {
         "Create a libvirt VM (idempotent on name). Stamps the swamp marker " +
         "into the description so delete can protect non-swamp VMs.",
       arguments: CreateVmArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = CreateVmArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -438,7 +467,10 @@ export const model = {
       description:
         "Attach a zvol to a VM as a DISK device (idempotent on the device path).",
       arguments: AttachDiskArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = AttachDiskArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -503,7 +535,10 @@ export const model = {
         "Attach a NIC to a VM with a fixed MAC (idempotent on the MAC). Pass " +
         "the source VM's MAC for a same-IP cutover.",
       arguments: AttachNicArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = AttachNicArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -564,7 +599,10 @@ export const model = {
     start: {
       description: "Start a VM and poll briefly for the running state.",
       arguments: VmRefArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = VmRefArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -594,7 +632,10 @@ export const model = {
     stop: {
       description: "Stop a VM (graceful, then force when requested).",
       arguments: StopArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = StopArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -626,7 +667,10 @@ export const model = {
     status: {
       description: "Read a VM's current state (read-only).",
       arguments: VmRefArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = VmRefArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -651,7 +695,10 @@ export const model = {
         "Delete a VM (and optionally its zvols). Refuses a VM lacking the " +
         "swamp marker unless force. 'Already gone' is a clean no-op.",
       arguments: DeleteArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = DeleteArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const session = await sessionFactory(connectOpts(context.globalArgs));
@@ -714,4 +761,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

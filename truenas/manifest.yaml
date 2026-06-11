@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/truenas'
-version: 2026.06.07.2
+version: 2026.06.09.1
 description: >
   Hypervisor-layer VM inventory for TrueNAS SCALE, via the JSON-RPC WebSocket
   API.

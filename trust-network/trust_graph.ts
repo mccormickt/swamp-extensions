@@ -17,7 +17,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   CfAccessAppSchema,
   CfAccessPolicySchema,
@@ -46,6 +45,38 @@ import {
 
 /** This model takes no global configuration — all input is per-`build`. */
 const GlobalArgs = z.object({});
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+    warn(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+  readResource?(
+    instanceName: string,
+    version?: number,
+  ): Promise<Record<string, unknown> | null>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 /**
  * Arguments for `build` — the provider scan output. The inventory workflow
@@ -116,14 +147,14 @@ const AssertPostureArgs = z.object({
  */
 export const model = {
   type: "@mccormick/trust-network/graph",
-  version: "2026.05.21.2",
+  version: "2026.06.09.1",
   upgrades: [
     {
       toVersion: "2026.05.21.2",
       description:
         "Cloudflare slice: Access apps as trust domains and targetDomainId " +
         "in edge ids. No globalArguments change.",
-      upgradeAttributes: (old) => old,
+      upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
   reports: ["@mccormick/trust-network/posture"],
@@ -154,8 +185,11 @@ export const model = {
         "Normalize the provider scans into a trust graph of domains and " +
         "credential edges, with a scored inventory roll-up.",
       arguments: BuildArgs,
-      execute: async (args, context) => {
-        const a = BuildArgs.parse(args);
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
+        const a = BuildArgs.parse(rawArgs);
         const now = new Date().toISOString();
         const notes: string[] = [];
 
@@ -273,10 +307,13 @@ export const model = {
         "violation list when findings or coverage are worse than allowed. " +
         "The CI enforcement gate — writes no data.",
       arguments: AssertPostureArgs,
-      execute: async (args, context) => {
-        const a = AssertPostureArgs.parse(args);
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
+        const a = AssertPostureArgs.parse(rawArgs);
 
-        const raw = await context.readResource("current");
+        const raw = await context.readResource!("current");
         if (raw === null) {
           throw new Error(
             "no trust-graph inventory found — run `graph build` first",
@@ -338,4 +375,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

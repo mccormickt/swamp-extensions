@@ -278,7 +278,7 @@ Deno.test("discover writes a node per machine, a cluster, and a summary", async 
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: GLOBAL_ARGS,
     });
-    await model.methods.discover.execute({}, context as DiscoverCtx);
+    await model.methods.discover.execute({}, context as unknown as DiscoverCtx);
     const written = getWrittenResources();
     const bySpec = (spec: string) => written.filter((r) => r.specName === spec);
 
@@ -310,7 +310,7 @@ Deno.test("discover throws when an Omni query fails, before writing data", async
       globalArgs: GLOBAL_ARGS,
     });
     await assertRejects(
-      () => model.methods.discover.execute({}, context as DiscoverCtx),
+      () => model.methods.discover.execute({}, context as unknown as DiscoverCtx),
       Error,
       "clustermachinestatus",
     );
@@ -327,7 +327,7 @@ Deno.test("discover rejects a non-https endpoint", async () => {
       globalArgs: { ...GLOBAL_ARGS, endpoint: "http://omni.example.net" },
     });
     await assertRejects(
-      () => model.methods.discover.execute({}, context as DiscoverCtx),
+      () => model.methods.discover.execute({}, context as unknown as DiscoverCtx),
       Error,
       "https",
     );

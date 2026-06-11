@@ -227,7 +227,7 @@ Deno.test("discover writes a vm per guest and a summary", async () => {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: GLOBAL_ARGS,
     });
-    await model.methods.discover.execute({}, context as DiscoverCtx);
+    await model.methods.discover.execute({}, context as unknown as DiscoverCtx);
     const written = getWrittenResources();
     const bySpec = (spec: string) => written.filter((r) => r.specName === spec);
 
@@ -254,7 +254,7 @@ Deno.test("discover propagates a transport failure before writing data", async (
       globalArgs: GLOBAL_ARGS,
     });
     await assertRejects(
-      () => model.methods.discover.execute({}, context as DiscoverCtx),
+      () => model.methods.discover.execute({}, context as unknown as DiscoverCtx),
       Error,
       "login rejected",
     );

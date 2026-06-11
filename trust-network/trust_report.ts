@@ -12,13 +12,37 @@
  *
  * @module
  */
-import type { ModelReportContext } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   type TrustDomain,
   type TrustEdge,
   type TrustInventory,
 } from "./shared/schema.ts";
 import { renderPosture } from "./shared/graph.ts";
+
+// Minimal structural typings for the model report context, declared locally
+// rather than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface ReportDataHandle {
+  specName: string;
+  name: string;
+  version: number;
+}
+interface ModelReportContext {
+  modelType: string;
+  modelId: string;
+  methodName: string;
+  dataHandles: ReportDataHandle[];
+  dataRepository: {
+    getContent(
+      modelType: string,
+      modelId: string,
+      name: string,
+      version: number,
+    ): Promise<Uint8Array | null>;
+  };
+}
 
 type DataHandle = ModelReportContext["dataHandles"][number];
 

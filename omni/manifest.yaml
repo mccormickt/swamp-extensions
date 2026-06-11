@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/omni'
-version: 2026.05.21.1
+version: 2026.06.09.1
 description: >
   Talos node discovery for swamp, via Sidero Omni.
 

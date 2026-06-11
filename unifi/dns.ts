@@ -20,7 +20,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import { DnsRecordSchema, sanitizeInstanceName } from "./schema.ts";
 import {
   staticDnsPath,
@@ -41,10 +40,10 @@ const GlobalArgs = z.object({
   controllerUrl: z.string().describe(
     "Local UniFi OS controller base URL, e.g. https://192.0.2.1",
   ),
-  apiKey: z.string().describe(
+  apiKey: z.string().meta({ sensitive: true }).describe(
     "Local controller API key (X-API-KEY); supply via " +
       '${{ vault.get("fleet", "UniFi - Local Controller Key/credential") }}',
-  ).meta({ sensitive: true }),
+  ),
   site: z.string().default("default").describe(
     "UniFi Network site name (usually 'default')",
   ),
@@ -55,6 +54,34 @@ const GlobalArgs = z.object({
     "Best-effort skip of TLS verification (limited; prefer caCert)",
   ),
 });
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+    warn(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 /** Arguments for {@link model.methods.upsert_record}. */
 const UpsertArgs = z.object({
@@ -98,7 +125,7 @@ function recordInstanceName(recordType: string, key: string): string {
  */
 export const model = {
   type: "@mccormick/unifi/dns",
-  version: "2026.06.04.2",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     dns_record: {
@@ -114,7 +141,10 @@ export const model = {
         "Read every custom/static DNS record from the controller and write " +
         "one dns_record resource per record. Read-only.",
       arguments: z.object({}),
-      execute: async (_args, context) => {
+      execute: async (
+        _rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const g = context.globalArgs;
         if (!g.apiKey) throw new Error("apiKey is required to query UniFi");
         const opts = optionsFrom(g);
@@ -148,7 +178,10 @@ export const model = {
         "update in place when it exists, otherwise create it. Writes the " +
         "resulting dns_record.",
       arguments: UpsertArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const args = UpsertArgs.parse(rawArgs);
         const g = context.globalArgs;
         if (!g.apiKey) throw new Error("apiKey is required to update UniFi");
@@ -228,7 +261,10 @@ export const model = {
         "if the record is already absent. Writes a tombstone dns_record " +
         "(id null, enabled false) recording the removal.",
       arguments: DeleteArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const args = DeleteArgs.parse(rawArgs);
         const g = context.globalArgs;
         if (!g.apiKey) throw new Error("apiKey is required to update UniFi");
@@ -291,7 +327,9 @@ export const model = {
         "accepted before mutating DNS.",
       labels: ["live"],
       appliesTo: ["upsert_record", "delete_record"],
-      execute: async (context) => {
+      execute: async (
+        context: MethodContext,
+      ): Promise<{ pass: boolean; errors?: string[] }> => {
         const g = GlobalArgs.parse(context.globalArgs);
         try {
           const resp = await unifiRequest(optionsFrom(g), {
@@ -315,4 +353,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

@@ -74,7 +74,7 @@ function run<M extends keyof typeof model.methods>(
   });
   // deno-lint-ignore no-explicit-any
   const exec = (model.methods[methodName] as any).execute;
-  return exec(args, context as AnyCtx).then(
+  return exec(args, context as unknown as AnyCtx).then(
     () => getWrittenResources() as unknown as Written[],
   );
 }

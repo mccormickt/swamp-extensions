@@ -229,7 +229,7 @@ Deno.test("scan discovers pools, providers, service accounts, and keys", async (
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: { projects: ["proj-1"], iamBaseUrl: "https://iam.googleapis.com" },
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const written = getWrittenResources();
 
     const bySpec = (spec: string) =>
@@ -277,7 +277,7 @@ Deno.test("scan records a note when a project is inaccessible", async () => {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: { projects: ["proj-1"], iamBaseUrl: "https://iam.googleapis.com" },
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const summary = getWrittenResources()
       .find((r) => r.specName === "federation_summary")!.data;
     assertEquals(summary.targetsScanned, 0);

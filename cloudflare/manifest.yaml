@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/cloudflare'
-version: 2026.05.21.1
+version: 2026.06.09.1
 description: >
   Cloudflare One / Zero Trust Access discovery for swamp.
 

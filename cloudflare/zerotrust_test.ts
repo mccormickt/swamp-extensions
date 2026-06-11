@@ -209,7 +209,7 @@ Deno.test("scan discovers apps, policies, idps, and service tokens", async () =>
         apiBaseUrl: "https://api.cloudflare.com/client/v4",
       },
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const written = getWrittenResources();
     const bySpec = (spec: string) => written.filter((r) => r.specName === spec);
 
@@ -246,7 +246,7 @@ Deno.test("scan records a note when an account is inaccessible", async () => {
         apiBaseUrl: "https://api.cloudflare.com/client/v4",
       },
     });
-    await model.methods.scan.execute({}, context as ScanCtx);
+    await model.methods.scan.execute({}, context as unknown as ScanCtx);
     const summary = getWrittenResources()
       .find((r) => r.specName === "access_summary")!.data;
     assertEquals(summary.targetsScanned, 0);

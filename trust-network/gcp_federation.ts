@@ -21,7 +21,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   type GcpSaKey,
   GcpSaKeySchema,
@@ -57,6 +56,34 @@ const GlobalArgs = z.object({
     "Google Cloud IAM API base URL",
   ),
 });
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+    warn(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 /** Render an unknown error as a redaction-safe, single-line string. */
 function errMsg(err: unknown): string {
@@ -97,7 +124,7 @@ interface RawSaKey {
  */
 export const model = {
   type: "@mccormick/trust-network/gcp",
-  version: "2026.05.19.1",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     wif_pool: {
@@ -139,7 +166,10 @@ export const model = {
         "Fan-out scan of Workload Identity Federation pools/providers, " +
         "service accounts, and user-managed keys across every project.",
       arguments: z.object({}),
-      execute: async (_args, context) => {
+      execute: async (
+        _rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const g = context.globalArgs;
         const iamBase = assertHttpsUrl(g.iamBaseUrl, "iamBaseUrl");
         // Only resolve a token when there is something to scan, so an empty
@@ -333,4 +363,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

@@ -12,7 +12,6 @@
  *
  * @module
  */
-import type { WorkflowReportContext } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   type FleetRow,
   renderFleet,
@@ -20,7 +19,36 @@ import {
   SPEC_TO_HYPERVISOR,
 } from "./render.ts";
 
-type StepExecution = WorkflowReportContext["stepExecutions"][number];
+// Minimal structural typings for the workflow report context, declared locally
+// rather than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface ReportDataHandle {
+  specName: string;
+  name: string;
+  version: number;
+}
+interface StepExecution {
+  status: string;
+  modelType: string;
+  modelId: string;
+  dataHandles: ReportDataHandle[];
+}
+interface WorkflowReportContext {
+  workflowName: string;
+  workflowStatus: string;
+  stepExecutions: StepExecution[];
+  dataRepository: {
+    getContent(
+      modelType: string,
+      modelId: string,
+      name: string,
+      version: number,
+    ): Promise<Uint8Array | null>;
+  };
+}
+
 type DataHandle = StepExecution["dataHandles"][number];
 
 /** Read and JSON-parse one resource produced by a workflow step. */

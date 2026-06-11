@@ -20,7 +20,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import {
   type GithubActionsSecret,
   GithubActionsSecretSchema,
@@ -50,9 +49,9 @@ const GlobalArgs = z.object({
   repos: z.array(z.string()).default([]).describe(
     "Explicit `owner/repo` entries to scan in addition to the orgs",
   ),
-  githubToken: z.string().describe(
+  githubToken: z.string().meta({ sensitive: true }).describe(
     'GitHub token; supply via ${{ vault.get("trust-network", "GITHUB_TOKEN") }}',
-  ).meta({ sensitive: true }),
+  ),
   apiBaseUrl: z.string().default("https://api.github.com").describe(
     "GitHub REST API base URL (override for GitHub Enterprise Server)",
   ),
@@ -63,6 +62,33 @@ const GlobalArgs = z.object({
     "Also enumerate per-environment secrets and variables",
   ),
 });
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 /** Render an unknown error as a redaction-safe, single-line string. */
 function errMsg(err: unknown): string {
@@ -137,7 +163,7 @@ async function gatherSecrets(
  */
 export const model = {
   type: "@mccormick/trust-network/github",
-  version: "2026.05.19.1",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     oidc_subject: {
@@ -167,7 +193,10 @@ export const model = {
       description: "Fan-out scan of GitHub Actions OIDC config and Actions " +
         "secrets/variables across every configured org and repository.",
       arguments: z.object({}),
-      execute: async (_args, context) => {
+      execute: async (
+        _rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const g = context.globalArgs;
         const base = assertHttpsUrl(g.apiBaseUrl, "apiBaseUrl");
         if ((g.orgs.length > 0 || g.repos.length > 0) && !g.githubToken) {
@@ -350,4 +379,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

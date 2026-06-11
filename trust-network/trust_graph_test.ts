@@ -214,7 +214,7 @@ Deno.test("build writes domains, edges, and a scored inventory", async () => {
         }),
       ],
     },
-    context as BuildCtx,
+    context as unknown as BuildCtx,
   );
   const written = getWrittenResources();
 
@@ -369,7 +369,7 @@ Deno.test("build correlates GitHub and GCP into one graph", async () => {
       ],
       gcpSaKeys: [saKey({})],
     },
-    context as BuildCtx,
+    context as unknown as BuildCtx,
   );
   const inventory = getWrittenResources()
     .find((r) => r.specName === "inventory")!.data;
@@ -583,7 +583,7 @@ Deno.test("build links Cloudflare IdPs to the apps that scope to them", async ()
       cfAccessApps: [cfApp({ allowedIdps: ["idp-1"] })],
       cfIdentityProviders: [cfIdp({ idpId: "idp-1" })],
     },
-    context as BuildCtx,
+    context as unknown as BuildCtx,
   );
   const edges = getWrittenResources()
     .filter((r) => r.specName === "trust_edge")
@@ -684,7 +684,7 @@ Deno.test("assert_posture passes a clean inventory with default thresholds", asy
   });
   const result = await model.methods.assert_posture.execute(
     {},
-    context as AssertCtx,
+    context as unknown as AssertCtx,
   );
   assertEquals(result, { dataHandles: [] });
 });
@@ -696,7 +696,7 @@ Deno.test("assert_posture fails on a critical finding", async () => {
     },
   });
   const err = await assertRejects(
-    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    () => model.methods.assert_posture.execute({}, context as unknown as AssertCtx),
     Error,
   );
   assertStringIncludes(err.message, "critical findings: 1");
@@ -709,7 +709,7 @@ Deno.test("assert_posture fails on a high finding", async () => {
     },
   });
   const err = await assertRejects(
-    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    () => model.methods.assert_posture.execute({}, context as unknown as AssertCtx),
     Error,
   );
   assertStringIncludes(err.message, "high findings: 2");
@@ -723,7 +723,7 @@ Deno.test("assert_posture fails when ephemeral coverage is below the floor", asy
     () =>
       model.methods.assert_posture.execute(
         { minEphemeralPct: 80 },
-        context as AssertCtx,
+        context as unknown as AssertCtx,
       ),
     Error,
   );
@@ -738,7 +738,7 @@ Deno.test("assert_posture fails when conditional-access coverage is below the fl
     () =>
       model.methods.assert_posture.execute(
         { minConditionalAccessPct: 90 },
-        context as AssertCtx,
+        context as unknown as AssertCtx,
       ),
     Error,
   );
@@ -758,7 +758,7 @@ Deno.test("assert_posture lists every breach when multiple thresholds fail", asy
     () =>
       model.methods.assert_posture.execute(
         { minEphemeralPct: 50 },
-        context as AssertCtx,
+        context as unknown as AssertCtx,
       ),
     Error,
   );
@@ -771,7 +771,7 @@ Deno.test("assert_posture lists every breach when multiple thresholds fail", asy
 Deno.test("assert_posture throws when no inventory has been built", async () => {
   const { context } = createModelTestContext({});
   const err = await assertRejects(
-    () => model.methods.assert_posture.execute({}, context as AssertCtx),
+    () => model.methods.assert_posture.execute({}, context as unknown as AssertCtx),
     Error,
   );
   assertStringIncludes(err.message, "run `graph build` first");
@@ -787,7 +787,7 @@ Deno.test("assert_posture honors the maxMedium threshold", async () => {
   assertEquals(
     await model.methods.assert_posture.execute(
       {},
-      lenient.context as AssertCtx,
+      lenient.context as unknown as AssertCtx,
     ),
     { dataHandles: [] },
   );
@@ -801,7 +801,7 @@ Deno.test("assert_posture honors the maxMedium threshold", async () => {
     () =>
       model.methods.assert_posture.execute(
         { maxMedium: 2 },
-        strict.context as AssertCtx,
+        strict.context as unknown as AssertCtx,
       ),
     Error,
   );

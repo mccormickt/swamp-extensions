@@ -80,7 +80,7 @@ Deno.test("list_records writes one dns_record per record", async () => {
     const { context, getWrittenResources } = createModelTestContext({
       globalArgs: GLOBAL_ARGS,
     });
-    await model.methods.list_records.execute({}, context as ListCtx);
+    await model.methods.list_records.execute({}, context as unknown as ListCtx);
     const written = getWrittenResources().filter((r) => r.specName === "dns_record");
     assertEquals(written.length, 2);
     assertEquals(
@@ -121,7 +121,7 @@ Deno.test("upsert_record updates an existing record in place (PUT)", async () =>
     });
     await model.methods.upsert_record.execute(
       { key: "omni.example.net", recordType: "A", value: "192.168.0.99", enabled: true },
-      context as UpsertCtx,
+      context as unknown as UpsertCtx,
     );
     // GET then PUT to the existing id.
     assertEquals(calls.length, 2);
@@ -166,7 +166,7 @@ Deno.test("upsert_record creates a new record (POST) when none matches", async (
     });
     await model.methods.upsert_record.execute(
       { key: "new.example.net", recordType: "A", value: "192.168.0.77", enabled: true },
-      context as UpsertCtx,
+      context as unknown as UpsertCtx,
     );
     assertEquals(calls.length, 2);
     assertEquals(calls[1].method, "POST");
@@ -198,7 +198,7 @@ Deno.test("delete_record deletes an existing record (DELETE) and tombstones", as
     });
     await model.methods.delete_record.execute(
       { key: "omni.example.net", recordType: "A" },
-      context as DeleteCtx,
+      context as unknown as DeleteCtx,
     );
     assertEquals(calls.length, 2);
     assertEquals(calls[1].method, "DELETE");
@@ -228,7 +228,7 @@ Deno.test("delete_record is idempotent when the record is absent (no DELETE)", a
     });
     await model.methods.delete_record.execute(
       { key: "absent.example.net", recordType: "A" },
-      context as DeleteCtx,
+      context as unknown as DeleteCtx,
     );
     // Only the GET ran — no DELETE for a record that doesn't exist.
     assertEquals(calls.length, 1);
@@ -252,7 +252,7 @@ Deno.test("controller-reachable check passes on a 2xx response", async () => {
   try {
     const { context } = createModelTestContext({ globalArgs: GLOBAL_ARGS });
     const result = await model.checks["controller-reachable"].execute(
-      context as CheckCtx,
+      context as unknown as CheckCtx,
     );
     assertEquals(result.pass, true);
   } finally {
@@ -267,7 +267,7 @@ Deno.test("controller-reachable check fails on a non-2xx response", async () => 
   try {
     const { context } = createModelTestContext({ globalArgs: GLOBAL_ARGS });
     const result = await model.checks["controller-reachable"].execute(
-      context as CheckCtx,
+      context as unknown as CheckCtx,
     );
     assertEquals(result.pass, false);
     assertEquals((result.errors?.length ?? 0) > 0, true);

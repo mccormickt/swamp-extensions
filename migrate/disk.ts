@@ -23,7 +23,6 @@
  * @module
  */
 import { z } from "npm:zod@4";
-import type { ModelDefinition } from "jsr:@systeminit/swamp-testing@0.20260519.14";
 import { GuestDiskEditSchema, TransferSchema, VerifySchema } from "./schema.ts";
 import { relayStream, sshExec, sshExecOrThrow, type SshTarget } from "./ssh.ts";
 import {
@@ -56,6 +55,33 @@ const GlobalArgs = z.object({
     "Max seconds for a stream/edit (disk copies are long)",
   ),
 });
+
+// Minimal structural typings for the method context, declared locally rather
+// than imported from the swamp testing package so the registry scorer's
+// `deno doc` never needs to resolve a JSR dependency (the convention the pulled
+// `@stateless/proxmox` model follows). The testing package is still used in
+// `*_test.ts`, which the scorer does not document.
+interface DataHandle {
+  name: string;
+  specName: string;
+  kind: string;
+  dataId: string;
+  version: number;
+}
+interface MethodContext {
+  globalArgs: z.infer<typeof GlobalArgs>;
+  logger: {
+    info(message: string, props?: Record<string, unknown>): void;
+  };
+  writeResource(
+    specName: string,
+    name: string,
+    data: Record<string, unknown>,
+  ): Promise<DataHandle>;
+}
+interface MethodResult {
+  dataHandles: DataHandle[];
+}
 
 const StreamArgs = z.object({
   srcHost: z.string().min(1),
@@ -183,7 +209,7 @@ function target(
 /** Host-to-host disk migration primitives. */
 export const model = {
   type: "@mccormick/migrate/disk",
-  version: "2026.06.07.2",
+  version: "2026.06.09.1",
   globalArguments: GlobalArgs,
   resources: {
     transfer: {
@@ -214,7 +240,7 @@ export const model = {
       labels: ["live"],
       appliesTo: ["stream", "edit_guest_disk"],
       execute: async (
-        context,
+        context: MethodContext,
       ): Promise<{ pass: boolean; errors?: string[] }> => {
         const errors: string[] = [];
         try {
@@ -249,7 +275,10 @@ export const model = {
         "Stream a powered-off source block device to a destination block " +
         "device (dd|zstd|ssh), direct or relay (auto-probed), verifying bytes.",
       arguments: StreamArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = StreamArgs.parse(rawArgs);
         const g = context.globalArgs;
         const srcUser = a.srcUser ?? g.sshUser;
@@ -372,7 +401,10 @@ export const model = {
         "a tool host (qemu-nbd + lvm2), rewrite to match-by-MAC, teardown in a " +
         "trap. The agent-absent fallback; LVM2 + ext4 roots only.",
       arguments: EditGuestDiskArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = EditGuestDiskArgs.parse(rawArgs);
         const g = context.globalArgs;
         const toolUser = a.toolUser ?? g.sshUser;
@@ -431,7 +463,10 @@ export const model = {
         "Poll an IP for TCP/ICMP reachability after cutover. Fails if the " +
         "expected reachability is not reached within the timeout.",
       arguments: VerifyArgs,
-      execute: async (rawArgs, context) => {
+      execute: async (
+        rawArgs: unknown,
+        context: MethodContext,
+      ): Promise<MethodResult> => {
         const a = VerifyArgs.parse(rawArgs);
         const deadline = Date.now() + a.timeoutSec * 1000;
         let attempts = 0;
@@ -469,4 +504,4 @@ export const model = {
       },
     },
   },
-} satisfies ModelDefinition<typeof GlobalArgs>;
+};

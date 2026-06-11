@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/fleet'
-version: 2026.06.07.1
+version: 2026.06.09.1
 description: >
   Cross-hypervisor fleet VM inventory report for swamp.
 

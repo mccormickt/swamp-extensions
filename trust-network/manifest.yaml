@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: '@mccormick/trust-network'
-version: 2026.05.21.2
+version: 2026.06.09.1
 description: >
   Inventory and report on OIDC trust policies and workload-identity federation
   across GitHub, Google Cloud, and Cloudflare One.

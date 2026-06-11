@@ -179,7 +179,7 @@ Deno.test("verify succeeds once the probe reports reachable", async () => {
     });
     await model.methods.verify.execute(
       { ip: "10.0.0.59", pollIntervalSec: 1, timeoutSec: 30 },
-      context as VerifyCtx,
+      context as unknown as VerifyCtx,
     );
     const v = getWrittenResources().find((r) => r.specName === "verify");
     assertEquals(v?.data.reachable, true);
@@ -197,7 +197,7 @@ Deno.test("verify throws when the IP never becomes reachable", async () => {
       () =>
         model.methods.verify.execute(
           { ip: "10.0.0.59", pollIntervalSec: 1, timeoutSec: 2 },
-          context as VerifyCtx,
+          context as unknown as VerifyCtx,
         ),
       Error,
       "expected reachable",
